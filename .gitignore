@@ -1,0 +1,10 @@
+node_modules
+.env
+dist
+build
+covereage
+*.log
+.DS_Store
+apps/*/node_modules
+packages/*/node_modules
+Docker/*/node_modules
