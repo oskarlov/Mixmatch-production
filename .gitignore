@@ -2,7 +2,7 @@ node_modules
 .env
 dist
 build
-covereage
+coverage
 *.log
 .DS_Store
 apps/*/node_modules
