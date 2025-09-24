@@ -1,172 +1,251 @@
-﻿require("dotenv").config();
-const express = require("express");
-const http = require("http");
-const { Server } = require("socket.io");
-const cors = require("cors");
-const DEV_MEDIA_BASE = process.env.DEV_MEDIA_BASE || "http://localhost:5173";
+﻿import express from "express";
+import http from "http";
+import { Server } from "socket.io";
+import crypto from "node:crypto";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+/** ------------------ setup ------------------ */
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const PORT = Number(process.env.PORT || 8080);
 const app = express();
-app.use(cors()); // allow all in dev
-app.use(express.json());
-
-app.get("/health", (_, res) => res.json({ ok: true }));
-app.get("/", (_, res) => res.send("MixMatch server is up"));
-
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: "*" }, // dev-friendly; lock down later
+  cors: { origin: true, methods: ["GET", "POST"] },
 });
 
-// ---- In-memory rooms (MVP) ----
-const rooms = new Map(); // code -> { hostId, players: Map<socketId,{name,score}> }
+// Serve demo media from /media (drop an MP3 here)
+const MEDIA_DIR = path.join(__dirname, "media");
+const AUDIO_FILE = "track1.mp3"; // change if you use a different file
+app.use("/media", express.static(MEDIA_DIR));
 
-function genCode() {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let c = "";
-  for (let i = 0; i < 4; i++) c += chars[Math.floor(Math.random() * chars.length)];
-  return rooms.has(c) ? genCode() : c;
+/** ------------------ room state ------------------ */
+/**
+ * Room shape:
+ * {
+ *   code: string,
+ *   hostId: string,
+ *   players: Map<socketId, { id, name, score }>,
+ *   q: { id, prompt, options: string[], correctIndex: number, durationMs: number } | null,
+ *   answers: Map<socketId, number>, // selected answer index
+ *   seconds: number, // countdown
+ *   timer: NodeJS.Timeout | null
+ * }
+ */
+const rooms = new Map();
+
+/** ------------------ helpers ------------------ */
+function newCode() {
+  // 4 hex chars, e.g., "A9F2"
+  return crypto.randomBytes(2).toString("hex").toUpperCase();
 }
 
-function emitRoster(code) {
+function roomPlayersArray(room) {
+  return Array.from(room.players.values());
+}
+
+function emitRoomUpdate(code) {
   const room = rooms.get(code);
   if (!room) return;
-  const players = [...room.players.entries()].map(([id, p]) => ({
-    id, name: p.name, score: p.score,
-  }));
-  io.to(code).emit("room:update", { code, players, hostId: room.hostId });
+  io.to(code).emit("room:update", {
+    code: room.code,
+    hostId: room.hostId,
+    players: roomPlayersArray(room),
+  });
 }
 
-io.on("connection", (socket) => {
-  console.log("connected:", socket.id);
+function stopTimer(room) {
+  if (room.timer) {
+    clearInterval(room.timer);
+    room.timer = null;
+  }
+}
 
+/** ------------------ socket logic ------------------ */
+io.on("connection", (socket) => {
+  // Keep track of where this socket is
+  socket.data.role = null; // "host" | "player"
+  socket.data.code = null;
+
+  /** Host creates a room */
   socket.on("host:createRoom", (_payload, cb) => {
     try {
-      const code = genCode();
-      rooms.set(code, { hostId: socket.id, players: new Map() });
+      // If already in a room, leave it
+      if (socket.data.code) socket.leave(socket.data.code);
+
+      let code = newCode();
+      while (rooms.has(code)) code = newCode();
+
+      const room = {
+        code,
+        hostId: socket.id,
+        players: new Map(),
+        q: null,
+        answers: new Map(),
+        seconds: 0,
+        timer: null,
+      };
+
+      rooms.set(code, room);
       socket.join(code);
-      emitRoster(code);
-      cb && cb({ ok: true, code });
-    } catch {
-      cb && cb({ ok: false, error: "CREATE_FAILED" });
+      socket.data.role = "host";
+      socket.data.code = code;
+
+      emitRoomUpdate(code);
+      cb?.({ ok: true, code });
+    } catch (err) {
+      console.error("host:createRoom error", err);
+      cb?.({ ok: false, error: "SERVER_ERROR" });
     }
   });
 
+  /** Player joins a room */
   socket.on("player:joinRoom", ({ code, name }, cb) => {
-    code = (code || "").toUpperCase().trim();
-    name = (name || "").trim() || "Player";
-    const room = rooms.get(code);
-    if (!room) return cb && cb({ ok: false, error: "ROOM_NOT_FOUND" });
-    socket.join(code);
-    room.players.set(socket.id, { name, score: 0 });
-    emitRoster(code);
-    cb && cb({ ok: true, code });
-    io.to(code).emit("room:toast", `${name} joined`);
-  });
+    try {
+      const room = rooms.get((code || "").toUpperCase());
+      if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
 
-  socket.on("game:startRound", ({ code }, cb) => {
-    const room = rooms.get(code);
-    if (!room || room.hostId !== socket.id)
-      return cb && cb({ ok: false, error: "NOT_HOST_OR_NO_ROOM" });
-    const q = {
-      id: String(Date.now()),
-      type: "song-title",
-      prompt: "Guess the song title (demo)",
-      options: ["A", "B", "C", "D"],
-      correctIndex: 1,
-      durationMs: 15000,
-    };
-    io.to(code).emit("question:new", q);
-    cb && cb({ ok: true, questionId: q.id });
-  });
+      socket.join(room.code);
+      socket.data.role = "player";
+      socket.data.code = room.code;
 
-  socket.on("answer:submit", ({ code, questionId, answerIndex }, cb) => {
-    const room = rooms.get(code);
-    if (!room) return cb && cb({ ok: false, error: "NO_ROOM" });
-    if (answerIndex === 1) {
-      const p = room.players.get(socket.id);
-      if (p) p.score += 1;
-      emitRoster(code);
+      const player = { id: socket.id, name: name?.trim() || "Player", score: 0 };
+      room.players.set(socket.id, player);
+
+      emitRoomUpdate(room.code);
+      cb?.({ ok: true });
+    } catch (err) {
+      console.error("player:joinRoom error", err);
+      cb?.({ ok: false, error: "SERVER_ERROR" });
     }
-    cb && cb({ ok: true });
   });
 
-  socket.on("room:leave", ({ code }) => {
+  /** Host starts a round */
+  socket.on("game:startRound", ({ code }, cb) => {
+    try {
+      const room = rooms.get(code || socket.data.code);
+      if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
+      if (room.hostId !== socket.id) return cb?.({ ok: false, error: "NOT_HOST" });
+
+      // Mock question for now
+      const q = {
+        id: String(Date.now()),
+        prompt: "Which track is by Daft Punk?",
+        options: ["One More Time", "Nikes", "Ribs", "Toxic"],
+        correctIndex: 0,
+        durationMs: 15000, // 15s
+      };
+
+      // reset round state
+      stopTimer(room);
+      room.q = q;
+      room.answers = new Map();
+      room.seconds = Math.max(1, Math.round(q.durationMs / 1000));
+
+      // Emit new question to everyone in the room
+      io.to(room.code).emit("question:new", q);
+
+      // Send media to the hub only (host socket)
+      const media = { id: q.id, audioUrl: `/media/${AUDIO_FILE}`, durationMs: q.durationMs };
+      io.to(room.hostId).emit("question:hubMedia", media);
+
+      // Start countdown ticks
+      io.to(room.code).emit("question:tick", { seconds: room.seconds });
+      room.timer = setInterval(() => {
+        room.seconds -= 1;
+        if (room.seconds <= 0) {
+          stopTimer(room);
+          room.seconds = 0;
+        }
+        io.to(room.code).emit("question:tick", { seconds: room.seconds });
+      }, 1000);
+
+      cb?.({ ok: true, questionId: q.id });
+    } catch (err) {
+      console.error("game:startRound error", err);
+      cb?.({ ok: false, error: "SERVER_ERROR" });
+    }
+  });
+
+  /** Player submits an answer */
+  socket.on("answer:submit", ({ code, questionId, answerIndex }, cb) => {
+    try {
+      const room = rooms.get(code || socket.data.code);
+      if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
+      if (!room.q || room.q.id !== questionId) return cb?.({ ok: false, error: "NO_ACTIVE_QUESTION" });
+
+      // If timer already ended, ignore new answers
+      if (room.seconds <= 0) return cb?.({ ok: false, error: "TIME_UP" });
+
+      // Record first answer only
+      if (!room.answers.has(socket.id)) {
+        room.answers.set(socket.id, Number(answerIndex));
+      }
+      cb?.({ ok: true });
+    } catch (err) {
+      console.error("answer:submit error", err);
+      cb?.({ ok: false, error: "SERVER_ERROR" });
+    }
+  });
+
+  /** Host reveals correct answer and scores */
+  socket.on("game:reveal", ({ code }, cb) => {
+    try {
+      const room = rooms.get(code || socket.data.code);
+      if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
+      if (room.hostId !== socket.id) return cb?.({ ok: false, error: "NOT_HOST" });
+
+      stopTimer(room);
+
+      const correct = room.q?.correctIndex ?? 0;
+
+      // Score: +1 for correct
+      for (const [sid, idx] of room.answers.entries()) {
+        if (idx === correct) {
+          const p = room.players.get(sid);
+          if (p) p.score += 1;
+        }
+      }
+
+      // Reveal to all
+      io.to(room.code).emit("question:reveal", { correctIndex: correct });
+
+      // Update roster with new scores
+      emitRoomUpdate(room.code);
+
+      cb?.({ ok: true });
+    } catch (err) {
+      console.error("game:reveal error", err);
+      cb?.({ ok: false, error: "SERVER_ERROR" });
+    }
+  });
+
+  /** Disconnect handling */
+  socket.on("disconnect", () => {
+    const code = socket.data.code;
+    if (!code) return;
+
     const room = rooms.get(code);
     if (!room) return;
-    socket.leave(code);
-    if (room.players.has(socket.id)) {
-      const name = room.players.get(socket.id).name;
-      room.players.delete(socket.id);
-      emitRoster(code);
-      io.to(code).emit("room:toast", `${name} left`);
-    } else if (room.hostId === socket.id) {
+
+    if (socket.id === room.hostId) {
+      // Host left: close the room
+      stopTimer(room);
       io.to(code).emit("room:closed");
       io.in(code).socketsLeave(code);
       rooms.delete(code);
+    } else {
+      // Remove player and update roster
+      room.players.delete(socket.id);
+      emitRoomUpdate(code);
     }
   });
-
-  socket.on("disconnect", () => {
-    for (const [code, room] of rooms.entries()) {
-      if (room.players.has(socket.id)) {
-        const name = room.players.get(socket.id).name;
-        room.players.delete(socket.id);
-        emitRoster(code);
-        io.to(code).emit("room:toast", `${name} disconnected`);
-      } else if (room.hostId === socket.id) {
-        io.to(code).emit("room:closed");
-        io.in(code).socketsLeave(code);
-        rooms.delete(code);
-      }
-    }
-    console.log("disconnected:", socket.id);
-  });
-  // Host reveals the answer
-socket.on("game:reveal", ({ code }, cb) => {
-  const room = rooms.get(code);
-  if (!room || room.hostId !== socket.id) return cb && cb({ ok:false, error:"NOT_HOST_OR_NO_ROOM" });
-  // In demo we always say index=1 is correct
-  io.to(code).emit("question:reveal", { correctIndex: 1 });
-  cb && cb({ ok:true });
 });
 
-// Host requests next round (new demo question)
-socket.on("game:startRound", ({ code }, cb) => {
-  const room = rooms.get(code);
-  if (!room || room.hostId !== socket.id)
-    return cb && cb({ ok: false, error: "NOT_HOST_OR_NO_ROOM" });
-
-  const q = {
-    id: String(Date.now()),
-    type: "audio-guess",
-    prompt: "What song is this? (demo)",
-    options: ["A", "B", "C", "D"],
-    durationMs: 15000,
-  };
-
-  const correctIndex = 1; // demo
-  const media = {
-    // Hub-only audio. Replace later with Spotify preview_url.
-    audioUrl: `${DEV_MEDIA_BASE}/samples/track1.mp3`,
-  };
-
-  // 1) Public question to everyone in the room (host + players)
-  io.to(code).emit("question:new", q);
-
-  // 2) Private media only to the host
-  io.to(room.hostId).emit("question:hubMedia", { id: q.id, ...media });
-
-  // (optional) start a simple tick
-  let sec = q.durationMs / 1000 | 0;
-  const t = setInterval(() => {
-    sec--;
-    if (sec <= 0) return clearInterval(t);
-    io.to(code).emit("question:tick", { seconds: sec });
-  }, 1000);
-
-  // keep the answer server-side; reveal later
-  cb && cb({ ok: true, questionId: q.id, correctIndex });
+/** ------------------ start server ------------------ */
+server.listen(PORT, () => {
+  console.log(`Server listening on http://localhost:${PORT}`);
+  console.log(`Serving media from /media (dir: ${MEDIA_DIR})`);
 });
-});
-
-const PORT = process.env.PORT || 8080;
-server.listen(PORT, () => console.log(`Server running on :${PORT}`));
