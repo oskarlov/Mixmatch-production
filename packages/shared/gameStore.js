@@ -10,37 +10,174 @@ export const makeGameStore = (serverUrl) => {
       code: "",
       players: [],
       hostId: "",
-      stage: "idle",         // idle | lobby | question | locked | result
-      question: null,        // { id, prompt, options[], correctIndex? }
-      seconds: 0,            // countdown
-      media: null            // { audioUrl } (hub-only)
+      firstPlayerId: null,     // first player can Start/Continue
+      selfId: s.connected ? s.id : null, // set immediately if already connected
+      stage: "idle",           // idle | lobby | question | reveal | result | gameover | locked (player-only)
+      question: null,          // { id, prompt, options[], correctIndex? }
+      seconds: 0,
+      deadline: null,
+      revealUntil: null,
+      resultUntil: null,
+      progress: { answered: 0, total: 0 },
+      perOptionCounts: [],
+      leaderboard: [],
+      media: null,             // { audioUrl } (hub-only)
+      joinError: null,         // e.g., ROOM_LOCKED, NO_SUCH_ROOM
     };
 
-    // ---------- socket events ----------
-    s.on("room:update", ({ code, players, hostId }) =>
-      set({ code, players, hostId, stage: code ? "lobby" : "idle" })
-    );
-    s.on("room:closed", () => set({ ...init }));
+    const secondsFrom = (ts, fallback = 0) =>
+      ts ? Math.max(0, Math.ceil((ts - Date.now()) / 1000)) : fallback;
 
-    s.on("question:new", (q) => set({ stage: "question", question: q, seconds: Math.round((q.durationMs||0)/1000) }));
-    s.on("question:tick", ({ seconds }) => set({ seconds }));
-    s.on("question:reveal", ({ correctIndex }) =>
-      set((st) => ({ stage: "result", question: st.question ? { ...st.question, correctIndex } : st.question }))
+    // ---------- socket events ----------
+    s.on("connect", () => set({ selfId: s.id }));
+
+    s.on("room:update", ({ code, players, hostId, firstPlayerId }) =>
+      set((st) => ({
+        code,
+        players,
+        hostId,
+        firstPlayerId: firstPlayerId ?? st.firstPlayerId,
+        // only set lobby when we were idle; otherwise keep gameplay stage
+        stage: code ? (st.stage === "idle" ? "lobby" : st.stage) : "idle",
+      }))
     );
+
+    s.on("room:closed", () => set({ ...init, selfId: s.connected ? s.id : null }));
+
+    // when server sends "we're back in lobby"
+    s.on("game:lobby", () => {
+      set({
+        stage: "lobby",
+        question: null,
+        seconds: 0,
+        revealUntil: null,
+        resultUntil: null,
+        perOptionCounts: [],
+        leaderboard: [],
+      });
+    });
+
+    s.on("question:new", (q) => {
+      const seconds = Math.round((q.durationMs || 0) / 1000);
+      set({
+        stage: "question",
+        question: q,
+        seconds,
+        deadline: q.deadline ?? (q.durationMs ? Date.now() + q.durationMs : null),
+        revealUntil: null,
+        resultUntil: null,
+        perOptionCounts: [],
+        leaderboard: [],
+        progress: { answered: 0, total: get().players.length || 0 },
+      });
+    });
+
+    s.on("question:next", (q) => {
+      const seconds = Math.round((q.durationMs || 0) / 1000);
+      set({
+        stage: "question",
+        question: q,
+        seconds,
+        deadline: q.deadline ?? (q.durationMs ? Date.now() + q.durationMs : null),
+        revealUntil: null,
+        resultUntil: null,
+        perOptionCounts: [],
+        leaderboard: [],
+        progress: { answered: 0, total: get().players.length || 0 },
+      });
+    });
+
+    s.on("question:tick", ({ seconds }) => set({ seconds }));
+    s.on("progress:update", ({ answered, total }) => set({ progress: { answered, total } }));
     s.on("question:hubMedia", (media) => set({ media }));
+
+    s.on("question:reveal", ({ correctIndex, perOptionCounts = [], revealUntil }) =>
+      set((st) => ({
+        stage: "reveal",
+        question: st.question ? { ...st.question, correctIndex } : st.question,
+        perOptionCounts,
+        revealUntil: revealUntil ?? null,
+        seconds: secondsFrom(revealUntil, st.seconds),
+      }))
+    );
+
+    s.on("question:result", ({ leaderboard = [], resultUntil }) =>
+      set((st) => ({
+        stage: "result",
+        leaderboard,
+        resultUntil: resultUntil ?? null,
+        seconds: secondsFrom(resultUntil, st.seconds),
+      }))
+    );
+
+    s.on("game:end", ({ leaderboard = [] }) =>
+      set({ stage: "gameover", leaderboard })
+    );
 
     // ---------- actions ----------
     return {
       ...init,
+
+      // HOST: create a room
       createRoom: () => s.emit("host:createRoom"),
-      joinRoom: (code, name) => s.emit("player:joinRoom", { code, name }),
-      startRound: () => s.emit("game:startRound", { code: get().code }),
+
+      // PLAYER: join (no auto-rejoin, no storage; always manual)
+      joinRoom: (code, name, cb) => {
+        const c = (code || "").trim().toUpperCase();
+        const n = (name || "").trim() || "Player";
+        if (!c) return;
+
+        s.emit("player:joinRoom", { code: c, name: n }, (res) => {
+          if (!res?.ok) {
+            set({ joinError: res?.error || "JOIN_FAILED" });
+          } else {
+            set({
+              joinError: null,
+              // Show lobby right away; room:update will hydrate players/host/firstPlayerId
+              code: c,
+              stage: "lobby",
+            });
+          }
+          cb?.(res);
+        });
+      },
+
+      // host OR first player can start the game
+      startGame: () => s.emit("game:startGame", { code: get().code }),
+      // backward-compat alias
+      startRound: () => s.emit("game:startGame", { code: get().code }),
+
+      // skip timers in reveal/result
+      advance: () => s.emit("game:advance", { code: get().code }),
+
+      // game over controls
+      playAgain: () => s.emit("game:playAgain", { code: get().code }),
+      toLobby: () =>
+        s.emit("game:toLobby", { code: get().code }, (res) => {
+          if (res?.ok) {
+            // Optimistic flip
+            set({
+              stage: "lobby",
+              question: null,
+              seconds: 0,
+              revealUntil: null,
+              resultUntil: null,
+              perOptionCounts: [],
+              leaderboard: [],
+            });
+          }
+        }),
+
+      // optional manual reveal trigger (host)
       reveal: () => s.emit("game:reveal", { code: get().code }),
+
+      // PLAYER: submit an answer (locks locally)
       submitAnswer: (answerIndex) => {
-        const q = get().question; if (!q) return;
+        const q = get().question;
+        if (!q) return;
         s.emit("answer:submit", { code: get().code, questionId: q.id, answerIndex });
         set({ stage: "locked" });
-      }
+      },
     };
   });
 };
