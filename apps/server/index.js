@@ -33,6 +33,7 @@ app.use("/media", express.static(MEDIA_DIR));
  *   firstPlayerId: string|null,
  *   reclaimByName: Map<lowerName, { name, score }>, // disconnected players
  *   whitelistNames: Set<lowerName>|null,             // frozen at game start
+ *   config: { maxQuestions: number, defaultDurationMs: number },
  *   // round state:
  *   q,
  *   answersByName: Map<lowerName, number>,           // <-- track answers by name (prevents double answers)
@@ -41,7 +42,7 @@ app.use("/media", express.static(MEDIA_DIR));
  *   revealUntil: number|null,                        // when reveal ends
  *   resultUntil: number|null,                        // when result ends
  *   timers: { tick, reveal, result },
- *   _poolIdx, qCount, maxQuestions, manualLock
+ *   _poolIdx, qCount, manualLock
  * }
  */
 const rooms = new Map();
@@ -101,6 +102,7 @@ function emitRoomUpdate(code) {
     hostId: room.hostId,
     players: roomPlayersArray(room),
     firstPlayerId: room.firstPlayerId || null,
+    config: room.config, // <= expose settings to clients
   });
 }
 function clearTimers(room) {
@@ -130,16 +132,20 @@ function progressCounts(room) {
 /** ------------------ round engine ------------------ */
 function startQuestion(room) {
   clearTimers(room);
-  if (room.qCount >= room.maxQuestions) return gameEnd(room); // safety
+  if (room.qCount >= room.config.maxQuestions) return gameEnd(room);
 
   const q = nextFromPool(room);
   if (!q) return gameEnd(room);
 
   room.stage = "question";
   room.q = q;
-  room.answersByName = new Map();               // reset
+  room.answersByName = new Map();
   room.perOptionCounts = Array(q.options.length).fill(0);
-  room.deadline = Date.now() + (q.durationMs || 20000);
+
+  //  Config wins, regardless of per-question duration
+  const durationMs = room.config.defaultDurationMs ?? 20000;
+
+  room.deadline = Date.now() + durationMs;
   room.revealUntil = null;
   room.resultUntil = null;
   room.qCount += 1;
@@ -148,7 +154,7 @@ function startQuestion(room) {
     id: q.id,
     prompt: q.prompt,
     options: q.options,
-    durationMs: q.durationMs || 20000,
+    durationMs,
     deadline: room.deadline,
   });
 
@@ -156,11 +162,10 @@ function startQuestion(room) {
     io.to(room.hostId).emit("question:hubMedia", {
       id: q.id,
       audioUrl: q.media.audioUrl,
-      durationMs: q.durationMs || 20000,
+      durationMs,
     });
   }
 
-  // initial tick + progress
   emitTick(room);
   const { answered, total } = progressCounts(room);
   io.to(room.code).emit("progress:update", { answered, total });
@@ -173,6 +178,7 @@ function startQuestion(room) {
     }
   }, 1000);
 }
+
 function emitTick(room) {
   const seconds = Math.max(0, Math.ceil((room.deadline - Date.now()) / 1000));
   io.to(room.code).emit("question:tick", { seconds });
@@ -243,7 +249,7 @@ function result(room) {
   emitRoomUpdate(room.code);
 
   room.timers.result = setTimeout(() => {
-    if (room.qCount >= room.maxQuestions) gameEnd(room);
+    if (room.qCount >= room.config.maxQuestions) gameEnd(room);
     else startQuestion(room);
   }, 8000);
 }
@@ -268,7 +274,7 @@ function advance(room) {
     result(room);
   } else if (room.stage === "result") {
     clearTimeout(room.timers.result);
-    if (room.qCount >= room.maxQuestions) gameEnd(room);
+    if (room.qCount >= room.config.maxQuestions) gameEnd(room);
     else startQuestion(room);
   }
 }
@@ -290,7 +296,6 @@ function playAgain(room) {
   // start a new game
   startQuestion(room);
 }
-
 
 /** Back to lobby */
 function toLobby(room) {
@@ -321,7 +326,6 @@ function toLobby(room) {
   io.to(room.code).emit("game:lobby");
 }
 
-
 /** ------------------ socket logic ------------------ */
 io.on("connection", (socket) => {
   socket.data.role = null; // "host" | "player"
@@ -335,7 +339,6 @@ io.on("connection", (socket) => {
       let code = newCode();
       while (rooms.has(code)) code = newCode();
 
-      const pool = demoPool();
       const room = {
         code,
         hostId: socket.id,
@@ -344,6 +347,10 @@ io.on("connection", (socket) => {
         firstPlayerId: null,
         reclaimByName: new Map(),
         whitelistNames: null, // set at game start
+        config: {
+          maxQuestions: demoPool().length,   // default: play each once
+          defaultDurationMs: 20000           // 20s fallback if question has no durationMs
+        },
         q: null,
         answersByName: new Map(),
         perOptionCounts: [],
@@ -353,7 +360,6 @@ io.on("connection", (socket) => {
         timers: { tick: null, reveal: null, result: null },
         _poolIdx: -1,
         qCount: 0,
-        maxQuestions: pool.length, // play each once
         manualLock: false,
       };
 
@@ -427,11 +433,12 @@ io.on("connection", (socket) => {
 
       // Stage sync to this socket only
       if (room.stage === "question" && room.q) {
+        const nowLeft = Math.max(0, (room.deadline ?? Date.now()) - Date.now());
         socket.emit("question:new", {
           id: room.q.id,
           prompt: room.q.prompt,
           options: room.q.options,
-          durationMs: (room.deadline ? room.deadline - Date.now() : 0) || 20000,
+          durationMs: nowLeft || room.config.defaultDurationMs,
           deadline: room.deadline,
         });
         const { answered, total } = progressCounts(room);
@@ -480,6 +487,10 @@ io.on("connection", (socket) => {
         Array.from(room.players.values()).map(p => p.name.toLowerCase())
       );
 
+      // reset round counters
+      room._poolIdx = -1;
+      room.qCount = 0;
+
       startQuestion(room);
       cb?.({ ok: true, questionId: room.q?.id });
     } catch (err) {
@@ -494,7 +505,7 @@ io.on("connection", (socket) => {
       const room = rooms.get(code || socket.data.code);
       if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
 
-    const allowed = socket.id === room.hostId || socket.id === room.firstPlayerId;
+      const allowed = socket.id === room.hostId || socket.id === room.firstPlayerId;
       if (!allowed) return cb?.({ ok: false, error: "NOT_ALLOWED" });
       if (room.stage !== "lobby") return cb?.({ ok: false, error: "ALREADY_STARTED" });
 
@@ -502,6 +513,10 @@ io.on("connection", (socket) => {
       room.whitelistNames = new Set(
         Array.from(room.players.values()).map(p => p.name.toLowerCase())
       );
+
+      // reset round counters
+      room._poolIdx = -1;
+      room.qCount = 0;
 
       startQuestion(room);
       cb?.({ ok: true, questionId: room.q?.id });
@@ -565,6 +580,9 @@ io.on("connection", (socket) => {
       const room = rooms.get(code || socket.data.code);
       if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
       if (!canControl(socket, room)) return cb?.({ ok: false, error: "NOT_ALLOWED" });
+      // reset counters before starting a new question
+      room._poolIdx = -1;
+      room.qCount = 0;
       playAgain(room);
       cb?.({ ok: true });
     } catch (err) {
@@ -583,6 +601,33 @@ io.on("connection", (socket) => {
       cb?.({ ok: true });
     } catch (err) {
       console.error("game:toLobby error", err);
+      cb?.({ ok: false, error: "SERVER_ERROR" });
+    }
+  });
+
+  /** Simple Game Settings (host-only, lobby-only) */
+  socket.on("game:updateConfig", (payload, cb) => {
+    try {
+      const code = payload?.code || socket.data?.code;
+      const room = rooms.get(code);
+      if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
+
+      if (socket.id !== room.hostId) return cb?.({ ok: false, error: "NOT_HOST" });
+      if (room.stage !== "lobby") return cb?.({ ok: false, error: "ALREADY_STARTED" });
+
+      const clamp = (n, lo, hi, fallback) =>
+        Number.isFinite(Number(n)) ? Math.max(lo, Math.min(hi, Number(n))) : fallback;
+
+      const maxQuestions = clamp(payload?.maxQuestions, 1, 50, room.config.maxQuestions);
+      const defaultDurationMs = clamp(payload?.durationMs, 5000, 120000, room.config.defaultDurationMs);
+
+      room.config.maxQuestions = maxQuestions;
+      room.config.defaultDurationMs = defaultDurationMs;
+
+      emitRoomUpdate(room.code);
+      cb?.({ ok: true, config: room.config });
+    } catch (err) {
+      console.error("game:updateConfig error", err);
       cb?.({ ok: false, error: "SERVER_ERROR" });
     }
   });

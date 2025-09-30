@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from "react";
 // If you published the shared package with this name (recommended):
 // import { makeGameStore } from "@mixmatch/shared/gameStore";
 // Temporary relative import:
-import { makeGameStore } from "../../../packages/shared/gameStore.js";
+import { useGameStore } from "./store";
+import LobbySettings from "./components/LobbySettings";
 
-const useGame = makeGameStore(import.meta.env.VITE_SERVER_URL);
+const useGame = useGameStore;
 
 export default function Hub() {
   const {
@@ -39,6 +40,9 @@ export default function Hub() {
     return (
       <Shell headerRight={<StageBadge stage={stage} />}>
         <RoomHeader code={code} />
+        <div className="mt-6">
+          <LobbySettings />
+        </div>
 
         <Card title="Players">
           <PlayerGrid players={players} hostId={hostId} />

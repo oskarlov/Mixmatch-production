@@ -23,6 +23,9 @@ export const makeGameStore = (serverUrl) => {
       leaderboard: [],
       media: null,             // { audioUrl } (hub-only)
       joinError: null,         // e.g., ROOM_LOCKED, NO_SUCH_ROOM
+
+      // -------- Simple Game Settings (from server) --------
+      config: { maxQuestions: 10, defaultDurationMs: 20000 },
     };
 
     const secondsFrom = (ts, fallback = 0) =>
@@ -31,18 +34,21 @@ export const makeGameStore = (serverUrl) => {
     // ---------- socket events ----------
     s.on("connect", () => set({ selfId: s.id }));
 
-    s.on("room:update", ({ code, players, hostId, firstPlayerId }) =>
+    s.on("room:update", ({ code, players, hostId, firstPlayerId, config }) =>
       set((st) => ({
         code,
         players,
         hostId,
         firstPlayerId: firstPlayerId ?? st.firstPlayerId,
+        config: config || st.config || init.config, // keep server as source of truth
         // only set lobby when we were idle; otherwise keep gameplay stage
         stage: code ? (st.stage === "idle" ? "lobby" : st.stage) : "idle",
       }))
     );
 
-    s.on("room:closed", () => set({ ...init, selfId: s.connected ? s.id : null }));
+    s.on("room:closed", () =>
+      set({ ...init, selfId: s.connected ? s.id : null })
+    );
 
     // when server sends "we're back in lobby"
     s.on("game:lobby", () => {
@@ -88,7 +94,9 @@ export const makeGameStore = (serverUrl) => {
     });
 
     s.on("question:tick", ({ seconds }) => set({ seconds }));
-    s.on("progress:update", ({ answered, total }) => set({ progress: { answered, total } }));
+    s.on("progress:update", ({ answered, total }) =>
+      set({ progress: { answered, total } })
+    );
     s.on("question:hubMedia", (media) => set({ media }));
 
     s.on("question:reveal", ({ correctIndex, perOptionCounts = [], revealUntil }) =>
@@ -133,7 +141,7 @@ export const makeGameStore = (serverUrl) => {
           } else {
             set({
               joinError: null,
-              // Show lobby right away; room:update will hydrate players/host/firstPlayerId
+              // Show lobby right away; room:update will hydrate players/host/firstPlayerId/config
               code: c,
               stage: "lobby",
             });
@@ -175,8 +183,21 @@ export const makeGameStore = (serverUrl) => {
       submitAnswer: (answerIndex) => {
         const q = get().question;
         if (!q) return;
-        s.emit("answer:submit", { code: get().code, questionId: q.id, answerIndex });
+        s.emit("answer:submit", {
+          code: get().code,
+          questionId: q.id,
+          answerIndex,
+        });
         set({ stage: "locked" });
+      },
+
+      // -------- Simple Game Settings (host-only) --------
+      updateConfig: (partial, cb) => {
+        const { code } = get();
+        s.emit("game:updateConfig", { code, ...partial }, (res) => {
+          if (res?.ok && res.config) set({ config: res.config });
+          cb?.(res);
+        });
       },
     };
   });
