@@ -28,8 +28,8 @@ Quick Start:
 5. Open the apps in your browser:
 
    - Server → http://localhost:8080
-   - Hub → http://localhost:3001
-   - Player → http://localhost:3002
+   - Hub → http://localhost:5173
+   - Player → http://localhost:5174
 
 6. Stop everything:
 
