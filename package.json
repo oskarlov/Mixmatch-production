@@ -5,7 +5,10 @@
   "main": "index.js",
   "scripts": {"dev:server": "pnpm -F @mixmatch/server dev",
     "dev:hub": "pnpm -F hub dev",
-    "dev:player": "pnpm -F player dev"},
+    "dev:player": "pnpm -F player dev",
+    "dev:all": "pnpm -F @mixmatch/server dev & pnpm -F hub dev & pnpm -F player dev"
+  },
+    
   "keywords": [],
   "author": "",
   "license": "ISC",
