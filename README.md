@@ -38,7 +38,7 @@ Quick Start:
    docker-compose down
 
 Notes:
-- Make sure ports 8080, 3001, 3002 are free.
+- Make sure ports 8080, 5173, 5174 are free.
 - For live React development (hot reload), run apps locally instead of via Docker.
 - Spotify API keys or other secrets should be added via .env if needed.
 - Copys are left empty for now
