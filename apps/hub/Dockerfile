@@ -1,20 +1,19 @@
-# Use Node.js image (we may add frontend build later)
-FROM node:20
-
+FROM node:20-alpine
 WORKDIR /app
+RUN corepack enable
 
-# Copy package files
+# Use root lockfile + workspace layout for reproducible installs
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
+# cache package graphs for the specific workspaces you need
+COPY apps/hub/package.json apps/hub/package.json
+COPY packages/shared/package.json packages/shared/package.json
+
+RUN pnpm install --frozen-lockfile
+
+# bring in all sources (hub + shared)
 COPY . .
 
-# Install dependencies
-RUN npm install -g pnpm
-RUN pnpm install || echo "Dependencies not installed yet"
-
-# Copy source code (optional for now)
-COPY . .
-
-# Expose a placeholder port (change later if needed)
-EXPOSE 3000
-
-# Default command (keeps container alive)
-CMD ["tail", "-f", "/dev/null"]
+# IMPORTANT: run from the app folder
+WORKDIR /app/apps/hub
+EXPOSE 5173
+CMD ["pnpm","dev","--host","0.0.0.0","--port","5173","--strictPort"]

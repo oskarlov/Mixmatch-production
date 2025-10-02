@@ -1,19 +1,22 @@
-# Use Node.js LTS image
-FROM node:20
-
-# Set working directory
+# apps/server/Dockerfile
+FROM node:20-alpine
 WORKDIR /app
+RUN corepack enable
 
-# Copy package files and install dependencies
-COPY package.json ./
-RUN npm install -g pnpm
-RUN pnpm install
+# Copy workspace manifests
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
+# Copy the specific package.json files for better install caching
+COPY apps/server/package.json apps/server/package.json
+# If server imports from shared, include its manifest too
+COPY packages/shared/package.json packages/shared/package.json
 
-# Copy the rest of the app
+# Install only server + its deps using the root lockfile
+RUN pnpm install --frozen-lockfile --filter ./apps/server...
+
+# Now bring in the full source
 COPY . .
 
-# Expose port
+# Run from the server app folder
+WORKDIR /app/apps/server
 EXPOSE 8080
-
-# Start the server
-CMD ["node", "index.js"]
+CMD ["pnpm", "start"]
