@@ -48,7 +48,6 @@ export default function LobbySettings() {
   return (
     <div className="p-4 rounded-2xl shadow-md border w-full max-w-md bg-white/5">
       <div className="text-xl font-semibold mb-2">Game Settings</div>
-      <div className="text-sm opacity-80 mb-4">Room <span className="font-mono">{code}</span></div>
 
       <label className="block mb-3">
         <span className="text-sm">Number of questions (1–50)</span>
