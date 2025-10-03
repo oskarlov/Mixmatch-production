@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from "react";
 // If you published the shared package with this name (recommended):
 // import { makeGameStore } from "@mixmatch/shared/gameStore";
 // Temporary relative import:
+import TheaterBackground from "./components/TheaterBackground";
+import SpotlightOverlay from "./components/SpotlightOverlay";
 import { useGameStore } from "./store";
 import LobbySettings from "./components/LobbySettings";
-import { SpotlightOverlay, CurtainOverlay, CurtainConductor} from "./components/theater";
 
-
+const THEATRE_BG = "/images/theatre-lobby.png";
 const useGame = useGameStore;
 
 export default function Hub() {
@@ -23,119 +24,209 @@ export default function Hub() {
   const audioRef = useRef(null);
   const [autoplayReady, setAutoplayReady] = useState(false);
 
-  // Try to autoplay when media changes (most browsers require one user gesture first)
   useEffect(() => {
     if (!media?.audioUrl || !audioRef.current) return;
     const el = audioRef.current;
     el.src = media.audioUrl;
     const tryPlay = async () => {
-      try { await el.play(); } catch { /* blocked until click */ }
+      try { await el.play(); } catch {/* blocked until click */}
     };
     tryPlay();
   }, [media]);
+
+  // ---- spotlight control ----
+  const [spotlightActive, setSpotlightActive] = useState(false);      // on/off (AnimatePresence fade on off)
+  const [spotlightEverSettled, setSpotlightEverSettled] = useState(false); // true after first flicker completes
+  const [questionVisible, setQuestionVisible] = useState(true);       // gate question UI until flicker settles
+
+  useEffect(() => {
+    // Reset everything in lobby/idle
+    if (stage === "idle" || stage === "lobby") {
+      setSpotlightActive(false);
+      setSpotlightEverSettled(false);
+      setQuestionVisible(true);
+      return;
+    }
+
+    // First time entering question: run flicker, hide question until settled
+    if (stage === "question") {
+      setSpotlightActive(true);
+      if (!spotlightEverSettled) {
+        setQuestionVisible(false);
+      } else {
+        setQuestionVisible(true);
+      }
+      return;
+    }
+
+    // Keep spotlight on during gameplay (reveal/result)
+    if (stage === "reveal" || stage === "result") {
+      setSpotlightActive(true);
+      setQuestionVisible(true);
+      return;
+    }
+
+    // Fade spotlight out on gameover
+    if (stage === "gameover") {
+      setSpotlightActive(false);
+      setQuestionVisible(true);
+      return;
+    }
+  }, [stage, question?.id, spotlightEverSettled]);
 
   // ---- stage router ----
   if (stage === "idle") return <Landing onCreate={createRoom} />;
 
   if (stage === "lobby") {
-    const canStart = !!code && players.length >= 1; // tweak min players if you want
+    const canStart = !!code && players.length >= 1;
     return (
-      <Shell headerRight={<StageBadge stage={stage} />}>
-        <RoomHeader code={code} />
-        <SpotlightOverlay />
-        {/* Two-column lobby: Players (left) | Settings (right) */}
-        <div className="grid gap-4 items-start grid-cols-1 lg:grid-cols-3">
-          <Card title={`Players (${players.length})`} className="lg:col-span-2">
-            <PlayerGrid players={players} hostId={hostId} />
-            {players.length === 0 && <EmptyNote>No players yet…</EmptyNote>}
-          </Card>
-
-          <Card title="Game settings">
-            <div className="space-y-4">
-              <LobbySettings />
-              <PrimaryButton onClick={startGame} disabled={!canStart} aria-label="Start game" className="w-full lg:w-auto">Start game</PrimaryButton>
-            </div>
-          </Card>
-        </div>
-      </Shell>
+      <TheaterBackground bgUrl={THEATRE_BG}>
+        <Shell headerRight={<StageBadge stage={stage} />}>
+          <RoomHeader code={code} />
+          <div className="grid gap-4 items-start grid-cols-1 lg:grid-cols-3">
+            <Card title={`Players (${players.length})`} className="lg:col-span-2">
+              <PlayerGrid players={players} hostId={hostId} />
+              {players.length === 0 && <EmptyNote>No players yet…</EmptyNote>}
+            </Card>
+            <Card title="Game settings">
+              <div className="space-y-4">
+                <LobbySettings />
+                <PrimaryButton
+                  onClick={startGame}
+                  disabled={!canStart}
+                  aria-label="Start game"
+                  className="w-full lg:w-auto"
+                >
+                  Start game
+                </PrimaryButton>
+              </div>
+            </Card>
+          </div>
+        </Shell>
+      </TheaterBackground>
     );
   }
 
   if (stage === "question") {
     return (
-      <Shell headerRight={<StageBadge stage={stage} seconds={seconds} />}>
-        <RoomHeader code={code} />
-        <CurtainConductor stage={stage} seconds={seconds} questionId={question?.id} />
-        {/* Desktop: 2 columns (audio | question). Mobile: stacked */}
-        <div className="grid gap-4 grid-cols-1 lg:grid-cols-2">
-          <AudioBlock
-            audioRef={audioRef}
-            autoplayReady={autoplayReady}
-            setAutoplayReady={setAutoplayReady}
-          />
-          <QuestionBlock question={question} showOptionsDimmed />
-        </div>
-
-        <Card>
-          <div className="text-sm text-slate-400">
-            Answers: {progress.answered}/{progress.total}
+      <TheaterBackground bgUrl={THEATRE_BG}>
+        {/* Spotlight underneath UI:
+            - Flicker only if it's the first time (spotlightEverSettled === false)
+            - Stays on across subsequent stages */}
+        <SpotlightOverlay
+          active={spotlightActive}
+          flicker={!spotlightEverSettled}
+          onSettled={() => {
+            setQuestionVisible(true);
+            setSpotlightEverSettled(true);
+          }}
+          r="45%"
+          holdOpacity={0.6}
+          center={[0.5, 0.5]}
+        />
+        <Shell headerRight={<StageBadge stage={stage} seconds={seconds} />}>
+          <RoomHeader code={code} />
+          <div className="grid gap-4 grid-cols-1 lg:grid-cols-2">
+            <AudioBlock
+              audioRef={audioRef}
+              autoplayReady={autoplayReady}
+              setAutoplayReady={setAutoplayReady}
+            />
+            {questionVisible ? (
+              <QuestionBlock question={question} showOptionsDimmed />
+            ) : (
+              <Card><div className="opacity-60">Preparing question…</div></Card>
+            )}
           </div>
-        </Card>
-      </Shell>
+          <Card>
+            <div className="text-sm text-slate-400">
+              Answers: {progress.answered}/{progress.total}
+            </div>
+          </Card>
+        </Shell>
+      </TheaterBackground>
     );
   }
 
   if (stage === "reveal") {
     return (
-      <Shell headerRight={<StageBadge stage={stage} seconds={seconds} label="Reveal ends in" />}>
-        <RoomHeader code={code} />
-        <CurtainConductor stage={stage} seconds={seconds} questionId={question?.id} />
-
-
-        <RevealBlock
-          question={question}
-          perOptionCounts={perOptionCounts}
+      <TheaterBackground bgUrl={THEATRE_BG}>
+        <SpotlightOverlay
+          active={spotlightActive}
+          flicker={false}           // no flicker after first time
+          r="45%"
+          holdOpacity={0.6}
+          center={[0.5, 0.5]}
         />
-      </Shell>
+        <Shell headerRight={<StageBadge stage={stage} seconds={seconds} label="Reveal ends in" />}>
+          <RoomHeader code={code} />
+          <RevealBlock question={question} perOptionCounts={perOptionCounts} />
+        </Shell>
+      </TheaterBackground>
     );
   }
 
   if (stage === "result") {
     return (
-      <Shell headerRight={<StageBadge stage={stage} seconds={seconds} label="Next question in" />}>
-        <RoomHeader code={code} />
-        <CurtainConductor stage={stage} seconds={seconds} questionId={question?.id} />
-
-        <LeaderboardBlock leaderboard={leaderboard} />
-        {/* Manual next button (optional): server already auto-advances */}
-        {typeof nextQuestion === "function" && (
-          <div className="mt-4">
-            <SecondaryButton onClick={nextQuestion}>Next now</SecondaryButton>
-          </div>
-        )}
-      </Shell>
+      <TheaterBackground bgUrl={THEATRE_BG}>
+        <SpotlightOverlay
+          active={spotlightActive}
+          flicker={false}
+          r="45%"
+          holdOpacity={0.6}
+          center={[0.5, 0.5]}
+        />
+        <Shell headerRight={<StageBadge stage={stage} seconds={seconds} label="Next question in" />}>
+          <RoomHeader code={code} />
+          <LeaderboardBlock leaderboard={leaderboard} />
+          {typeof nextQuestion === "function" && (
+            <div className="mt-4">
+              <SecondaryButton onClick={nextQuestion}>Next now</SecondaryButton>
+            </div>
+          )}
+        </Shell>
+      </TheaterBackground>
     );
   }
 
   if (stage === "gameover") {
     return (
-      <Shell headerRight={<StageBadge stage={stage} />}>
-        <RoomHeader code={code} />
-        <LeaderboardBlock leaderboard={leaderboard} />
-        <div className="flex flex-wrap gap-2">
-          <PrimaryButton onClick={playAgain}>Play again</PrimaryButton>
-          <SecondaryButton onClick={toLobby}>Back to lobby</SecondaryButton>
-        </div>
-      </Shell>
+      <TheaterBackground bgUrl={THEATRE_BG}>
+        {/* active=false -> SpotlightOverlay fades out */}
+        <SpotlightOverlay
+          active={spotlightActive}
+          flicker={false}
+          r="45%"
+          holdOpacity={0.6}
+          center={[0.5, 0.5]}
+        />
+        <Shell headerRight={<StageBadge stage={stage} />}>
+          <RoomHeader code={code} />
+          <LeaderboardBlock leaderboard={leaderboard} />
+          <div className="flex flex-wrap gap-2">
+            <PrimaryButton onClick={playAgain}>Play again</PrimaryButton>
+            <SecondaryButton onClick={toLobby}>Back to lobby</SecondaryButton>
+          </div>
+        </Shell>
+      </TheaterBackground>
     );
   }
 
   // Fallback
   return (
-    <Shell headerRight={<StageBadge stage={stage} seconds={seconds} />}>
-      <RoomHeader code={code} />
-      <Card>Unknown stage.</Card>
-    </Shell>
+    <TheaterBackground bgUrl={THEATRE_BG}>
+      <SpotlightOverlay
+        active={spotlightActive}
+        flicker={false}
+        r="45%"
+        holdOpacity={0.6}
+        center={[0.5, 0.5]}
+      />
+      <Shell headerRight={<StageBadge stage={stage} seconds={seconds} />}>
+        <RoomHeader code={code} />
+        <Card>Unknown stage.</Card>
+      </Shell>
+    </TheaterBackground>
   );
 }
 
@@ -143,7 +234,7 @@ export default function Hub() {
 
 function Shell({ children, headerRight }) {
   return (
-    <div className="min-h-dvh bg-slate-950 text-slate-100 font-sans px-4 sm:px-6 lg:px-10 py-6">
+    <div className="relative z-10 min-h-dvh text-slate-100 font-sans px-4 sm:px-6 lg:px-10 py-6">
       <div className="mx-auto max-w-screen-lg xl:max-w-screen-xl space-y-4 relative overflow-hidden">
         <header className="flex items-center justify-between gap-4">
           <h1 className="font-display tracking-wide text-balance text-2xl md:text-3xl font-semibold">Hub</h1>
@@ -165,11 +256,11 @@ function Landing({ onCreate }) {
 
 function StageBadge({ stage, seconds, label = "Time left" }) {
   return (
-    <span className="text-sm text-slate-400 inline-flex items-center gap-2">
+    <span className="text-sm text-slate-300 inline-flex items-center gap-2">
       <span className="hidden sm:inline">Stage:</span>
-      <b className="text-slate-200">{stage}</b>
+      <b className="text-slate-100">{stage}</b>
       {Number.isFinite(seconds) && seconds > 0 && (
-        <span className="px-2 py-1 rounded-full bg-slate-800">
+        <span className="px-2 py-1 rounded-full bg-black/40 ring-1 ring-white/10">
           <span className="opacity-70 mr-1 hidden md:inline">{label}</span>
           <span className="font-mono tabular-nums">{seconds}s</span>
         </span>
@@ -191,7 +282,7 @@ function RoomHeader({ code }) {
 
 function Card({ title, children, className = "" }) {
   return (
-    <div className={["rounded-xl bg-slate-900/90 ring-1 ring-white/5 shadow-lg shadow-black/30 p-4", className].join(" ") }>
+    <div className={["rounded-xl bg-black/50 ring-1 ring-white/10 shadow-lg shadow-black/40 p-4", className].join(" ") }>
       {title && <div className="text-sm text-slate-400 mb-2">{title}</div>}
       {children}
     </div>
@@ -199,7 +290,7 @@ function Card({ title, children, className = "" }) {
 }
 
 function EmptyNote({ children }) {
-  return <div className="text-slate-500">{children}</div>;
+  return <div className="text-slate-400">{children}</div>;
 }
 
 function PrimaryButton({ children, className = "", ...props }) {
@@ -222,7 +313,7 @@ function SecondaryButton({ children, className = "", ...props }) {
     <button
       {...props}
       className={[
-        "px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700",
+        "px-3 py-2 rounded-lg bg-slate-800/80 hover:bg-slate-700/80",
         "transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400",
         className,
       ].join(" ")}
@@ -269,7 +360,7 @@ function QuestionBlock({ question, showOptionsDimmed = false }) {
         ].join(" ")}
       >
         {(question?.options ?? []).map((opt, i) => (
-          <li key={i} className="rounded-lg px-3 py-2 bg-slate-800 break-words">
+          <li key={i} className="rounded-lg px-3 py-2 bg-slate-800/80 break-words">
             <div className="flex items-start gap-2">
               <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-slate-700 font-medium">
                 {String.fromCharCode(65 + i)}
@@ -303,14 +394,14 @@ function RevealBlock({ question, perOptionCounts }) {
               className={[
                 "rounded-lg px-3 py-2",
                 isCorrect
-                  ? "bg-emerald-700/40 outline outline-2 outline-emerald-500"
-                  : "bg-slate-800",
+                  ? "bg-emerald-700/40 outline outline-2 outline-emerald-500/70"
+                  : "bg-slate-800/80",
               ].join(" ")}
             >
               <div className="font-medium">
                 {String.fromCharCode(65 + i)}. {opt}
               </div>
-              <div className="mt-2 h-1.5 rounded bg-slate-700 overflow-hidden">
+              <div className="mt-2 h-1.5 rounded bg-slate-700/70 overflow-hidden">
                 <div
                   className={"h-full " + (isCorrect ? "bg-emerald-500" : "bg-slate-500")}
                   style={{ width: pct + "%" }}
@@ -330,14 +421,14 @@ function RevealBlock({ question, perOptionCounts }) {
 function LeaderboardBlock({ leaderboard }) {
   return (
     <Card title="Scores">
-      <div className="rounded-xl bg-slate-800">
+      <div className="rounded-xl bg-slate-800/70">
         {leaderboard.length === 0 && (
           <div className="p-4 text-slate-400">No scores yet…</div>
         )}
         {leaderboard.map((p, idx) => (
           <div
             key={p.id}
-            className="flex items-center justify-between p-3 border-b border-slate-700 last:border-b-0"
+            className="flex items-center justify-between p-3 border-b border-slate-700/60 last:border-b-0"
           >
             <div className="flex items-center gap-3 min-w-0">
               <span className="w-6 text-right opacity-70">{idx + 1}.</span>
@@ -359,7 +450,7 @@ function PlayerGrid({ players, hostId }) {
       {players.map((p) => (
         <li
           key={p.id}
-          className="rounded-lg bg-slate-800 px-3 py-2 flex items-center justify-between"
+          className="rounded-lg bg-slate-800/80 px-3 py-2 flex items-center justify-between"
         >
           <span className="truncate max-w-[20ch] md:max-w-none">
             {p.name}
