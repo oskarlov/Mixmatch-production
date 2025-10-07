@@ -1,15 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 // If you published the shared package with this name (recommended):
 // import { makeGameStore } from "@mixmatch/shared/gameStore";
-// Temporary relative import:
+// Temporary relative imports (keep your own paths)
 import TheaterBackground from "./components/TheaterBackground";
 import SpotlightOverlay from "./components/SpotlightOverlay";
-import CurtainOverlay from "./components/CurtainOverlay"; // curtains overlay
+import CurtainOverlay from "./components/CurtainOverlay";
 import { useGameStore } from "./store";
 import LobbySettings from "./components/LobbySettings";
 
 const THEATRE_BG = "/images/theatre-lobby.png";
 const useGame = useGameStore;
+
+// ---- responsive thresholds for curtains (tweak to taste) ----
+const MIN_W_FOR_CURTAINS = 992;
+const MIN_H_FOR_CURTAINS = 650;
 
 export default function Hub() {
   const {
@@ -17,11 +21,10 @@ export default function Hub() {
     progress = { answered: 0, total: 0 },
     perOptionCounts = [],
     leaderboard = [],
-    createRoom, startRound, reveal, nextQuestion,
-    startGame, playAgain, toLobby,
+    createRoom, startGame, nextQuestion, playAgain, toLobby,
   } = useGame();
 
-  // ---- hub audio (host-only media) ----
+  /* ---------------- Hub audio (host-only media) ---------------- */
   const audioRef = useRef(null);
   const [autoplayReady, setAutoplayReady] = useState(false);
 
@@ -30,74 +33,104 @@ export default function Hub() {
     const el = audioRef.current;
     el.src = media.audioUrl;
     const tryPlay = async () => {
-      try { await el.play(); } catch {/* blocked until click */}
+      try { await el.play(); } catch {/* blocked until user gesture */}
     };
     tryPlay();
   }, [media]);
 
-  // ---- spotlight + curtains control ----
+  /* ---------------- Spotlight + Curtains orchestration ---------------- */
   const [spotlightActive, setSpotlightActive] = useState(false);
   const [spotlightEverSettled, setSpotlightEverSettled] = useState(false);
-  const [questionVisible, setQuestionVisible] = useState(true);
 
-  // Curtains: run BEFORE every question
+  // Curtains cycle control (close→open before each question)
   const [curtainKey, setCurtainKey] = useState(0);
   const [curtainRunning, setCurtainRunning] = useState(false);
   const [allowFlicker, setAllowFlicker] = useState(false);
 
+  // Responsive: disable curtains if window is small / not “full-ish”
+  const [curtainsEnabled, setCurtainsEnabled] = useState(true);
+  useEffect(() => {
+    const compute = () =>
+      window.innerWidth >= MIN_W_FOR_CURTAINS &&
+      window.innerHeight >= MIN_H_FOR_CURTAINS;
+
+    const sync = () => setCurtainsEnabled(compute());
+    sync();
+    window.addEventListener("resize", sync);
+    document.addEventListener("fullscreenchange", sync);
+    return () => {
+      window.removeEventListener("resize", sync);
+      document.removeEventListener("fullscreenchange", sync);
+    };
+  }, []);
+
+  // Track the previous stage so we can hide synchronously on the very first render
+  const lastStageRef = useRef(stage);
+  const justEnteredQuestion = lastStageRef.current !== "question" && stage === "question";
+  useEffect(() => {
+    lastStageRef.current = stage;
+  }, [stage]);
+
+  // Drive stage transitions (NOTE: intentionally NOT dependent on curtainsEnabled)
   useEffect(() => {
     if (stage === "idle") {
       setSpotlightActive(false);
       setSpotlightEverSettled(false);
-      setQuestionVisible(true);
       setAllowFlicker(false);
       setCurtainRunning(false);
       return;
     }
 
     if (stage === "lobby") {
-      // Lobby: curtains visible at edges only (no animation)
+      // No curtain animation in lobby; no spotlight either.
       setSpotlightActive(false);
       setAllowFlicker(false);
-      setQuestionVisible(true);
       setCurtainRunning(false);
       return;
     }
 
     if (stage === "question") {
-      // Before each question: close→open, then spotlight flicker
+      // Prepare: reset spotlight and decide how to kick the sequence
       setSpotlightActive(true);
-      setAllowFlicker(false);
       setSpotlightEverSettled(false);
-      setQuestionVisible(false);
-      setCurtainRunning(true);
-      setCurtainKey((k) => k + 1); // trigger per-question cycle
+
+      if (curtainsEnabled /* snapshot only; not a dependency */) {
+        setAllowFlicker(false);      // enable flicker after curtains open
+        setCurtainRunning(true);
+        setCurtainKey((k) => k + 1); // trigger per-question cycle (one time)
+      } else {
+        // No curtains mounted → start flicker immediately
+        setCurtainRunning(false);
+        setAllowFlicker(true);
+      }
       return;
     }
 
     if (stage === "reveal" || stage === "result" || stage === "gameover") {
-      // Curtains stay open at edges; spotlight steady
+      // Keep steady light on non-question stages
       setSpotlightActive(true);
       setAllowFlicker(false);
-      setQuestionVisible(true);
       return;
     }
-  }, [stage, question?.id]);
+  }, [stage, question?.id]); // <-- IMPORTANT: no curtainsEnabled here
 
-  const isGameplay = stage === "question" || stage === "reveal" || stage === "result" || stage === "gameover";
+  // “Flicker is running” helper
   const isFlicker = stage === "question" && !spotlightEverSettled && allowFlicker;
 
-  // ---- stage router ----
+  // --- Visibility logic with synchronous guard against 1-frame flash ---
+  // During the very first render after entering "question", treat as NOT settled,
+  // even if state from previous stage still says settled=true.
+  const settledForRender = !justEnteredQuestion && spotlightEverSettled;
+  const questionStageHidden = stage === "question" && (curtainRunning || !settledForRender);
+
+  /* ---------------- Stage router ---------------- */
   if (stage === "idle") return <Landing onCreate={createRoom} />;
 
-  // === LOBBY (1+1 grid, equal width, centered, big "Room Code") ===
   if (stage === "lobby") {
     const canStart = !!code && players.length >= 1;
     return (
       <TheaterBackground bgUrl={THEATRE_BG}>
-        {/* Curtains visible at the edges; NO animation in lobby */}
-        <CurtainOverlay cycleKey={-1} topOffsetPx={0} edgePx={72} />
-
+        {/* No curtains in lobby per your preference */}
         <Shell
           wide
           title={
@@ -110,7 +143,6 @@ export default function Hub() {
           }
           headerRight={<StageBadge stage={stage} />}
         >
-          {/* Centered container, two equal columns on md+ */}
           <div className="mx-auto w-full max-w-[900px] grid gap-2 items-start grid-cols-1 md:grid-cols-2">
             <Card title={`Players (${players.length})`}>
               <PlayerGrid players={players} hostId={hostId} />
@@ -136,27 +168,34 @@ export default function Hub() {
   }
 
   if (stage === "question") {
+    // Only animate curtains if we explicitly started a cycle this round.
+    const shouldAnimateCurtains = curtainRunning;
+    const curtainCycleKey = shouldAnimateCurtains ? curtainKey : -1;
+
     return (
       <TheaterBackground bgUrl={THEATRE_BG}>
-        {/* Curtains: close → pause → open, then allow spotlight flicker */}
-        <CurtainOverlay
-          cycleKey={curtainKey}
-          topOffsetPx={0}
-          edgePx={72}
-          onCycleStart={() => setCurtainRunning(true)}
-          onCycleEnd={() => {
-            setCurtainRunning(false);
-            setQuestionVisible(true);
-            setAllowFlicker(true);
-          }}
-        />
+        {/* Curtains: animate only when curtainRunning === true.
+            On resize (mount/unmount), we pass -1 to keep them statically open-at-edges. */}
+        {curtainsEnabled && (
+          <CurtainOverlay
+            cycleKey={curtainCycleKey}
+            topOffsetPx={0}
+            edgePx={72}
+            onCycleStart={() => setCurtainRunning(true)}
+            onCycleEnd={() => {
+              setCurtainRunning(false);
+              setAllowFlicker(true);           // spotlight flicker starts now
+            }}
+          />
+        )}
 
+        {/* Spotlight controls reveal timing; perfect circle handled inside */}
         <SpotlightOverlay
           active={spotlightActive}
           flicker={isFlicker}
           onSettled={() => {
-            setQuestionVisible(true);
             setSpotlightEverSettled(true);
+            setAllowFlicker(false);            // lock into steady beam after settling
           }}
           holdOpacity={0.6}
           center={[0.5, 0.5]}
@@ -164,18 +203,14 @@ export default function Hub() {
           exitDuration={0.8}
         />
 
-        {/* Keep header visible; hide ONLY the body during curtains/flicker */}
+        {/* Keep header visible; hide body while curtains run OR until settle (synchronously guarded) */}
         <Shell
-          title={
-            <code className="font-mono tracking-widest text-xl md:text-2xl">
-              {code || "—"}
-            </code>
-          }
+          title={<code className="font-mono tracking-widest text-xl md:text-2xl">{code || "—"}</code>}
           headerRight={<StageBadge stage={stage} seconds={seconds} />}
-          bodyHidden={curtainRunning || isFlicker}
+          bodyHidden={questionStageHidden}
         >
           <StageCenter>
-            {questionVisible ? (
+            {settledForRender ? (
               <>
                 <QuestionBlock question={question} showOptionsDimmed />
                 <AudioBlock
@@ -201,8 +236,8 @@ export default function Hub() {
   if (stage === "reveal") {
     return (
       <TheaterBackground bgUrl={THEATRE_BG}>
-        {/* Curtains open at edges; no animation */}
-        <CurtainOverlay cycleKey={-1} topOffsetPx={0} edgePx={72} />
+        {/* Curtains hidden on small screens automatically; static open otherwise */}
+        {curtainsEnabled && <CurtainOverlay cycleKey={-1} topOffsetPx={0} edgePx={72} />}
         <SpotlightOverlay
           active={spotlightActive}
           flicker={false}
@@ -212,11 +247,7 @@ export default function Hub() {
           exitDuration={0.8}
         />
         <Shell
-          title={
-            <code className="font-mono tracking-widest text-xl md:text-2xl">
-              {code || "—"}
-            </code>
-          }
+          title={<code className="font-mono tracking-widest text-xl md:text-2xl">{code || "—"}</code>}
           headerRight={<StageBadge stage={stage} seconds={seconds} label="Reveal ends in" />}
         >
           <StageCenter>
@@ -230,8 +261,7 @@ export default function Hub() {
   if (stage === "result") {
     return (
       <TheaterBackground bgUrl={THEATRE_BG}>
-        {/* Curtains open at edges; no animation */}
-        <CurtainOverlay cycleKey={-1} topOffsetPx={0} edgePx={72} />
+        {curtainsEnabled && <CurtainOverlay cycleKey={-1} topOffsetPx={0} edgePx={72} />}
         <SpotlightOverlay
           active={spotlightActive}
           flicker={false}
@@ -241,15 +271,10 @@ export default function Hub() {
           exitDuration={0.8}
         />
         <Shell
-          title={
-            <code className="font-mono tracking-widest text-xl md:text-2xl">
-              {code || "—"}
-            </code>
-          }
+          title={<code className="font-mono tracking-widest text-xl md:text-2xl">{code || "—"}</code>}
           headerRight={<StageBadge stage={stage} seconds={seconds} label="Next question in" />}
         >
           <StageCenter>
-            {/* Compact leaderboard only on RESULT */}
             <LeaderboardBlock leaderboard={leaderboard} compact />
             {typeof nextQuestion === "function" && (
               <div className="mt-2">
@@ -265,8 +290,7 @@ export default function Hub() {
   if (stage === "gameover") {
     return (
       <TheaterBackground bgUrl={THEATRE_BG}>
-        {/* Curtains open at edges; no animation */}
-        <CurtainOverlay cycleKey={-1} topOffsetPx={0} edgePx={72} />
+        {curtainsEnabled && <CurtainOverlay cycleKey={-1} topOffsetPx={0} edgePx={72} />}
         <SpotlightOverlay
           active={spotlightActive}
           flicker={false}
@@ -276,11 +300,7 @@ export default function Hub() {
           exitDuration={0.8}
         />
         <Shell
-          title={
-            <code className="font-mono tracking-widest text-xl md:text-2xl">
-              {code || "—"}
-            </code>
-          }
+          title={<code className="font-mono tracking-widest text-xl md:text-2xl">{code || "—"}</code>}
           headerRight={<StageBadge stage={stage} />}
         >
           <StageCenter>
@@ -298,7 +318,7 @@ export default function Hub() {
   // Fallback
   return (
     <TheaterBackground bgUrl={THEATRE_BG}>
-      <CurtainOverlay cycleKey={-1} topOffsetPx={0} edgePx={72} />
+      {curtainsEnabled && <CurtainOverlay cycleKey={-1} topOffsetPx={0} edgePx={72} />}
       <SpotlightOverlay
         active={spotlightActive}
         flicker={false}
@@ -308,7 +328,7 @@ export default function Hub() {
         exitDuration={0.8}
       />
       <Shell
-        title={isGameplay ? <code className="font-mono tracking-widest text-xl md:text-2xl">{code || "—"}</code> : <>Hub</>}
+        title={<>{stage || "Hub"}</>}
         headerRight={<StageBadge stage={stage} seconds={seconds} />}
       >
         <StageCenter>
@@ -324,12 +344,9 @@ export default function Hub() {
 function Shell({ children, headerRight, wide = false, title = <>Hub</>, bodyHidden = false }) {
   return (
     <div className="relative z-10 min-h-dvh text-mist-100 font-sans px-4 sm:px-6 lg:px-8 py-6">
-      {/* wide ? centered roomy layout (lobby) : spotlight-focused column */}
       <div
         className={
-          (wide
-            ? "mx-auto max-w-[920px]"   // centered lobby container
-            : "mx-auto max-w-[900px]") +
+          (wide ? "mx-auto max-w-[920px]" : "mx-auto max-w-[900px]") +
           " space-y-4 relative overflow-hidden"
         }
       >
@@ -340,7 +357,7 @@ function Shell({ children, headerRight, wide = false, title = <>Hub</>, bodyHidd
           <div className="shrink-0">{headerRight}</div>
         </header>
 
-        {/* Only the body gets hidden during curtains/flicker */}
+        {/* Only the body gets hidden during curtains/settling */}
         <div className={bodyHidden ? "opacity-0 pointer-events-none select-none" : ""}>
           {children}
         </div>
@@ -349,7 +366,6 @@ function Shell({ children, headerRight, wide = false, title = <>Hub</>, bodyHidd
   );
 }
 
-/** Centers children in the middle of the screen with a max width (non-lobby stages) */
 function StageCenter({ children }) {
   return (
     <div className="min-h-[70dvh] grid place-items-center">
@@ -434,7 +450,6 @@ function SecondaryButton({ children, className = "", ...props }) {
   );
 }
 
-
 /* ============ Hub-only audio block ============ */
 function AudioBlock({ audioRef, autoplayReady, setAutoplayReady }) {
   return (
@@ -468,7 +483,7 @@ function QuestionBlock({ question, showOptionsDimmed = false }) {
         className={[
           "grid gap-2",
           "grid-cols-1 md:grid-cols-2",
-          showOptionsDimmed ? "opacity-60" : "",
+          //howOptionsDimmed ? "opacity-60" : "",
         ].join(" ")}
       >
         {(question?.options ?? []).map((opt, i) => (
@@ -536,8 +551,7 @@ function LeaderboardBlock({ leaderboard, compact = false }) {
     : "w-full rounded-xl bg-ink-800/70";
 
   return (
-    <Card /* no title prop so we can control heading style */>
-      {/* Big centered heading on RESULT (compact). Small label otherwise. */}
+    <Card>
       <div
         className={
           compact
