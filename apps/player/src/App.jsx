@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { makeGameStore } from "../../../packages/shared/gameStore.js";
+import EmoteDrawer, { EmoteOpener } from "./components/EmoteDrawer.jsx";
 
 const useGame = makeGameStore(import.meta.env.VITE_SERVER_URL);
 
@@ -18,6 +19,7 @@ export default function Player() {
   const [room, setRoom] = useState("");
   const [name, setName] = useState("");
   const [joining, setJoining] = useState(false);
+  const [emoteOpen, setEmoteOpen] = useState(false);
 
   // Fallback: if firstPlayerId not set yet, treat the first listed player as first
   const computedFirst = firstPlayerId || (players?.length ? players[0]?.id : null);
@@ -250,6 +252,12 @@ export default function Player() {
       {showContinue && (
         <PrimaryButton onClick={advance} className="w-full mt-2">Continue</PrimaryButton>
       )}
+      {code && (
+  <>
+    <EmoteOpener onOpen={() => setEmoteOpen(true)} />
+    <EmoteDrawer code={code} open={emoteOpen} onClose={() => setEmoteOpen(false)} />
+  </>
+)}
     </Screen>
   );
 }

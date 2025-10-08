@@ -36,13 +36,15 @@ app.use("/media", express.static(MEDIA_DIR));
  *   config: { maxQuestions: number, defaultDurationMs: number },
  *   // round state:
  *   q,
- *   answersByName: Map<lowerName, number>,           // <-- track answers by name (prevents double answers)
+ *   answersByName: Map<lowerName, number>,
  *   perOptionCounts: number[],
- *   deadline: number|null,                           // question lock time
- *   revealUntil: number|null,                        // when reveal ends
- *   resultUntil: number|null,                        // when result ends
+ *   deadline: number|null,
+ *   revealUntil: number|null,
+ *   resultUntil: number|null,
  *   timers: { tick, reveal, result },
- *   _poolIdx, qCount, manualLock
+ *   _poolIdx, qCount, manualLock,
+ *   // emotes:
+ *   emoteCooldownByName: Map<lowerName, number>, // last sent timestamp per player name
  * }
  */
 const rooms = new Map();
@@ -53,7 +55,7 @@ function newCode() {
 }
 function uniqueName(room, base) {
   const lower = base.toLowerCase();
-  const existing = new Set(Array.from(room.players.values()).map(p => p.name.toLowerCase()));
+  const existing = new Set(Array.from(room.players.values()).map((p) => p.name.toLowerCase()));
   if (!existing.has(lower)) return base;
   let i = 2;
   while (existing.has(`${lower} (${i})`)) i++;
@@ -102,7 +104,7 @@ function emitRoomUpdate(code) {
     hostId: room.hostId,
     players: roomPlayersArray(room),
     firstPlayerId: room.firstPlayerId || null,
-    config: room.config, // <= expose settings to clients
+    config: room.config,
   });
 }
 function clearTimers(room) {
@@ -121,7 +123,7 @@ function stopAllAndClose(room) {
 }
 function progressCounts(room) {
   // count how many CONNECTED players' names are in answersByName
-  const connected = new Set(Array.from(room.players.values()).map(p => p.name.toLowerCase()));
+  const connected = new Set(Array.from(room.players.values()).map((p) => p.name.toLowerCase()));
   let answered = 0;
   for (const key of room.answersByName.keys()) {
     if (connected.has(key)) answered++;
@@ -142,7 +144,6 @@ function startQuestion(room) {
   room.answersByName = new Map();
   room.perOptionCounts = Array(q.options.length).fill(0);
 
-  //  Config wins, regardless of per-question duration
   const durationMs = room.config.defaultDurationMs ?? 20000;
 
   room.deadline = Date.now() + durationMs;
@@ -191,7 +192,6 @@ function submitAnswer(room, socketId, answerIndex) {
   if (!player) return;
   const key = player.name.toLowerCase();
 
-  // Prevent double-answers across disconnects
   if (room.answersByName.has(key)) return;
 
   const choice = Number(answerIndex);
@@ -200,11 +200,9 @@ function submitAnswer(room, socketId, answerIndex) {
     room.perOptionCounts[choice]++;
   }
 
-  // live progress
   const { answered, total } = progressCounts(room);
   io.to(room.code).emit("progress:update", { answered, total });
 
-  // Early reveal if everyone answered
   if (answered >= total) {
     clearInterval(room.timers.tick);
     reveal(room);
@@ -229,7 +227,6 @@ function result(room) {
   room.stage = "result";
 
   const correct = room.q.correctIndex ?? 0;
-  // Award to currently connected players who answered correctly
   for (const p of room.players.values()) {
     const idx = room.answersByName.get(p.name.toLowerCase());
     if (idx === correct) p.score = (p.score || 0) + 1;
@@ -282,18 +279,10 @@ function advance(room) {
 /** Reset scores & start again */
 function playAgain(room) {
   clearTimers(room);
-
-  // reset all scores
   for (const p of room.players.values()) p.score = 0;
-
-  // reset round pointers
   room._poolIdx = -1;
   room.qCount = 0;
-
-  // push fresh scores so Hub shows 0s before the next question starts
   emitRoomUpdate(room.code);
-
-  // start a new game
   startQuestion(room);
 }
 
@@ -308,8 +297,8 @@ function toLobby(room) {
 
   // fully clear round state
   room.q = null;
-  room.answersByName = new Map(); // if you use answersByName
-  room.answers = new Map();       // if you still have answers by socket id anywhere
+  room.answersByName = new Map();
+  room.answers = new Map(); // legacy slot if used elsewhere
   room.perOptionCounts = [];
   room.deadline = null;
   room.revealUntil = null;
@@ -321,7 +310,9 @@ function toLobby(room) {
   room.whitelistNames = null;
   room.reclaimByName = new Map();
 
-  // update clients with zeroed scores, then flip UI back to lobby
+  // clear emote cooldowns when returning to lobby
+  room.emoteCooldownByName = new Map();
+
   emitRoomUpdate(room.code);
   io.to(room.code).emit("game:lobby");
 }
@@ -348,8 +339,8 @@ io.on("connection", (socket) => {
         reclaimByName: new Map(),
         whitelistNames: null, // set at game start
         config: {
-          maxQuestions: demoPool().length,   // default: play each once
-          defaultDurationMs: 20000           // 20s fallback if question has no durationMs
+          maxQuestions: demoPool().length,
+          defaultDurationMs: 20000,
         },
         q: null,
         answersByName: new Map(),
@@ -361,6 +352,8 @@ io.on("connection", (socket) => {
         _poolIdx: -1,
         qCount: 0,
         manualLock: false,
+        // emotes anti-spam
+        emoteCooldownByName: new Map(),
       };
 
       rooms.set(code, room);
@@ -382,27 +375,24 @@ io.on("connection", (socket) => {
       const room = rooms.get((code || "").toUpperCase());
       if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
 
-      const desired = (name?.trim() || "Player");
+      const desired = name?.trim() || "Player";
       const key = desired.toLowerCase();
 
       const joiningDuringGame = room.stage !== "lobby";
-      const connectedNames = new Set(
-        Array.from(room.players.values()).map(p => p.name.toLowerCase())
-      );
+      const connectedNames = new Set(Array.from(room.players.values()).map((p) => p.name.toLowerCase()));
 
       let finalName = desired;
       let startScore = 0;
       let isReclaim = false;
 
       if (joiningDuringGame) {
-        // hard lock: only names captured at game start may rejoin, and only if we
-        // have a saved claim (i.e., they actually disconnected previously)
+        // hard lock: only names captured at game start may rejoin, and only if we have a saved claim
         if (!room.whitelistNames?.has(key)) {
           return cb?.({ ok: false, error: "ROOM_LOCKED" });
         }
         if (room.reclaimByName.has(key) && !connectedNames.has(key)) {
           const saved = room.reclaimByName.get(key);
-          finalName = saved.name;            // preserve original casing
+          finalName = saved.name;
           startScore = saved.score || 0;
           isReclaim = true;
           room.reclaimByName.delete(key);
@@ -475,19 +465,14 @@ io.on("connection", (socket) => {
   /** Start game (host OR first player) */
   socket.on("game:startGame", ({ code }, cb) => {
     try {
-      const room = rooms.get(code || socket.data.code);
+      const room = rooms.get((code || socket.data.code || "").toUpperCase());
       if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
       if (!(socket.id === room.hostId || socket.id === room.firstPlayerId)) {
         return cb?.({ ok: false, error: "NOT_ALLOWED" });
       }
       if (room.stage !== "lobby") return cb?.({ ok: false, error: "ALREADY_STARTED" });
 
-      // freeze whitelist of names at game start
-      room.whitelistNames = new Set(
-        Array.from(room.players.values()).map(p => p.name.toLowerCase())
-      );
-
-      // reset round counters
+      room.whitelistNames = new Set(Array.from(room.players.values()).map((p) => p.name.toLowerCase()));
       room._poolIdx = -1;
       room.qCount = 0;
 
@@ -502,19 +487,14 @@ io.on("connection", (socket) => {
   /** Backwards compat: startRound actually starts the game */
   socket.on("game:startRound", ({ code }, cb) => {
     try {
-      const room = rooms.get(code || socket.data.code);
+      const room = rooms.get((code || socket.data.code || "").toUpperCase());
       if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
 
       const allowed = socket.id === room.hostId || socket.id === room.firstPlayerId;
       if (!allowed) return cb?.({ ok: false, error: "NOT_ALLOWED" });
       if (room.stage !== "lobby") return cb?.({ ok: false, error: "ALREADY_STARTED" });
 
-      // freeze whitelist at start (compat path)
-      room.whitelistNames = new Set(
-        Array.from(room.players.values()).map(p => p.name.toLowerCase())
-      );
-
-      // reset round counters
+      room.whitelistNames = new Set(Array.from(room.players.values()).map((p) => p.name.toLowerCase()));
       room._poolIdx = -1;
       room.qCount = 0;
 
@@ -529,7 +509,7 @@ io.on("connection", (socket) => {
   /** Player submits an answer */
   socket.on("answer:submit", ({ code, questionId, answerIndex }, cb) => {
     try {
-      const room = rooms.get(code || socket.data.code);
+      const room = rooms.get((code || socket.data.code || "").toUpperCase());
       if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
       if (!room.q || room.q.id !== questionId) return cb?.({ ok: false, error: "NO_ACTIVE_QUESTION" });
 
@@ -544,7 +524,7 @@ io.on("connection", (socket) => {
   /** Manual reveal (host only) */
   socket.on("game:reveal", ({ code }, cb) => {
     try {
-      const room = rooms.get(code || socket.data.code);
+      const room = rooms.get((code || socket.data.code || "").toUpperCase());
       if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
       if (room.hostId !== socket.id) return cb?.({ ok: false, error: "NOT_HOST" });
 
@@ -560,7 +540,7 @@ io.on("connection", (socket) => {
   /** Continue (skip timers) – host or first player; only in reveal/result */
   socket.on("game:advance", ({ code }, cb) => {
     try {
-      const room = rooms.get(code || socket.data.code);
+      const room = rooms.get((code || socket.data.code || "").toUpperCase());
       if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
       if (!canControl(socket, room)) return cb?.({ ok: false, error: "NOT_ALLOWED" });
       if (!["reveal", "result"].includes(room.stage)) {
@@ -577,10 +557,9 @@ io.on("connection", (socket) => {
   /** Play again (reset scores + start immediately) */
   socket.on("game:playAgain", ({ code }, cb) => {
     try {
-      const room = rooms.get(code || socket.data.code);
+      const room = rooms.get((code || socket.data.code || "").toUpperCase());
       if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
       if (!canControl(socket, room)) return cb?.({ ok: false, error: "NOT_ALLOWED" });
-      // reset counters before starting a new question
       room._poolIdx = -1;
       room.qCount = 0;
       playAgain(room);
@@ -594,7 +573,7 @@ io.on("connection", (socket) => {
   /** Back to lobby */
   socket.on("game:toLobby", ({ code }, cb) => {
     try {
-      const room = rooms.get(code || socket.data.code);
+      const room = rooms.get((code || socket.data.code || "").toUpperCase());
       if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
       if (!canControl(socket, room)) return cb?.({ ok: false, error: "NOT_ALLOWED" });
       toLobby(room);
@@ -608,7 +587,7 @@ io.on("connection", (socket) => {
   /** Simple Game Settings (host-only, lobby-only) */
   socket.on("game:updateConfig", (payload, cb) => {
     try {
-      const code = payload?.code || socket.data?.code;
+      const code = (payload?.code || socket.data?.code || "").toUpperCase();
       const room = rooms.get(code);
       if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
 
@@ -632,6 +611,59 @@ io.on("connection", (socket) => {
     }
   });
 
+  /** ------------------ EMOTES ------------------ */
+  // Player sends a small base64 PNG emote; broadcast to room with 5s cooldown per player name.
+  socket.on("emote:send", ({ code, image }, cb) => {
+    try {
+      const room = rooms.get((code || socket.data.code || "").toUpperCase());
+      if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
+
+      const player = room.players.get(socket.id);
+      if (!player) return cb?.({ ok: false, error: "NOT_IN_ROOM" });
+
+      // Basic validation: expect a small data URL PNG
+      if (typeof image !== "string" || !image.startsWith("data:image/png;base64,")) {
+        return cb?.({ ok: false, error: "BAD_IMAGE" });
+      }
+      // Rough size guard: limit to ~250KB dataURL string length
+      if (image.length > 250_000) {
+        return cb?.({ ok: false, error: "IMAGE_TOO_LARGE" });
+      }
+
+      if (!room.emoteCooldownByName) room.emoteCooldownByName = new Map();
+
+      const key = player.name.toLowerCase();
+      const now = Date.now();
+      const last = room.emoteCooldownByName.get(key) || 0;
+      const COOLDOWN_MS = 5000;
+
+      if (now - last < COOLDOWN_MS) {
+        const wait = Math.ceil((COOLDOWN_MS - (now - last)) / 1000);
+        return cb?.({ ok: false, error: "COOLDOWN", wait });
+      }
+
+      room.emoteCooldownByName.set(key, now);
+
+      const payload = {
+        id: `${now}-${socket.id}`,
+        name: player.name,
+        image,
+        at: now,
+      };
+
+      io.to(room.code).emit("emote:new", payload);
+      console.log("emote:send -> emote:new", {
+        room: room.code,
+        from: player.name,
+        size: image.length,
+      });
+      cb?.({ ok: true });
+    } catch (err) {
+      console.error("emote:send error", err);
+      cb?.({ ok: false, error: "SERVER_ERROR" });
+    }
+  });
+
   /** Disconnect handling */
   socket.on("disconnect", () => {
     const code = socket.data.code;
@@ -647,10 +679,10 @@ io.on("connection", (socket) => {
       // Save for reclaim (only matters after start; harmless in lobby)
       const leaving = room.players.get(socket.id);
       if (leaving) {
-        room.reclaimByName.set(
-          leaving.name.toLowerCase(),
-          { name: leaving.name, score: leaving.score || 0 }
-        );
+        room.reclaimByName.set(leaving.name.toLowerCase(), {
+          name: leaving.name,
+          score: leaving.score || 0,
+        });
       }
 
       // Remove player
@@ -659,9 +691,7 @@ io.on("connection", (socket) => {
 
       // Re-assign firstPlayerId if needed
       if (wasFirst) {
-        room.firstPlayerId = room.players.size
-          ? roomPlayersArray(room)[0].id
-          : null;
+        room.firstPlayerId = room.players.size ? roomPlayersArray(room)[0].id : null;
       }
 
       // If in-question and everyone remaining answered → reveal now

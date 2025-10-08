@@ -7,6 +7,7 @@ import SpotlightOverlay from "./components/SpotlightOverlay";
 import CurtainOverlay from "./components/CurtainOverlay";
 import { useGameStore } from "./store";
 import LobbySettings from "./components/LobbySettings";
+import EmoteStream from "./components/EmoteStream.jsx";
 
 const THEATRE_BG = "/images/theatre-lobby.png";
 const useGame = useGameStore;
@@ -123,12 +124,14 @@ export default function Hub() {
   const settledForRender = !justEnteredQuestion && spotlightEverSettled;
   const questionStageHidden = stage === "question" && (curtainRunning || !settledForRender);
 
-  /* ---------------- Stage router ---------------- */
-  if (stage === "idle") return <Landing onCreate={createRoom} />;
+  /* ---------------- Stage router -> assemble into `content` ---------------- */
+  let content = null;
 
-  if (stage === "lobby") {
+  if (stage === "idle") {
+    content = <Landing onCreate={createRoom} />;
+  } else if (stage === "lobby") {
     const canStart = !!code && players.length >= 1;
-    return (
+    content = (
       <TheaterBackground bgUrl={THEATRE_BG}>
         {/* No curtains in lobby per your preference */}
         <Shell
@@ -165,14 +168,12 @@ export default function Hub() {
         </Shell>
       </TheaterBackground>
     );
-  }
-
-  if (stage === "question") {
+  } else if (stage === "question") {
     // Only animate curtains if we explicitly started a cycle this round.
     const shouldAnimateCurtains = curtainRunning;
     const curtainCycleKey = shouldAnimateCurtains ? curtainKey : -1;
 
-    return (
+    content = (
       <TheaterBackground bgUrl={THEATRE_BG}>
         {/* Curtains: animate only when curtainRunning === true.
             On resize (mount/unmount), we pass -1 to keep them statically open-at-edges. */}
@@ -231,10 +232,8 @@ export default function Hub() {
         </Shell>
       </TheaterBackground>
     );
-  }
-
-  if (stage === "reveal") {
-    return (
+  } else if (stage === "reveal") {
+    content = (
       <TheaterBackground bgUrl={THEATRE_BG}>
         {/* Curtains hidden on small screens automatically; static open otherwise */}
         {curtainsEnabled && <CurtainOverlay cycleKey={-1} topOffsetPx={0} edgePx={72} />}
@@ -256,10 +255,8 @@ export default function Hub() {
         </Shell>
       </TheaterBackground>
     );
-  }
-
-  if (stage === "result") {
-    return (
+  } else if (stage === "result") {
+    content = (
       <TheaterBackground bgUrl={THEATRE_BG}>
         {curtainsEnabled && <CurtainOverlay cycleKey={-1} topOffsetPx={0} edgePx={72} />}
         <SpotlightOverlay
@@ -285,10 +282,8 @@ export default function Hub() {
         </Shell>
       </TheaterBackground>
     );
-  }
-
-  if (stage === "gameover") {
-    return (
+  } else if (stage === "gameover") {
+    content = (
       <TheaterBackground bgUrl={THEATRE_BG}>
         {curtainsEnabled && <CurtainOverlay cycleKey={-1} topOffsetPx={0} edgePx={72} />}
         <SpotlightOverlay
@@ -313,29 +308,37 @@ export default function Hub() {
         </Shell>
       </TheaterBackground>
     );
+  } else {
+    // Fallback
+    content = (
+      <TheaterBackground bgUrl={THEATRE_BG}>
+        {curtainsEnabled && <CurtainOverlay cycleKey={-1} topOffsetPx={0} edgePx={72} />}
+        <SpotlightOverlay
+          active={spotlightActive}
+          flicker={false}
+          holdOpacity={0.6}
+          center={[0.5, 0.5]}
+          duration={1.6}
+          exitDuration={0.8}
+        />
+        <Shell
+          title={<>{stage || "Hub"}</>}
+          headerRight={<StageBadge stage={stage} seconds={seconds} />}
+        >
+          <StageCenter>
+            <Card>Unknown stage.</Card>
+          </StageCenter>
+        </Shell>
+      </TheaterBackground>
+    );
   }
 
-  // Fallback
+  // --- Mount EmoteStream ONCE so it never resets on stage changes ---
   return (
-    <TheaterBackground bgUrl={THEATRE_BG}>
-      {curtainsEnabled && <CurtainOverlay cycleKey={-1} topOffsetPx={0} edgePx={72} />}
-      <SpotlightOverlay
-        active={spotlightActive}
-        flicker={false}
-        holdOpacity={0.6}
-        center={[0.5, 0.5]}
-        duration={1.6}
-        exitDuration={0.8}
-      />
-      <Shell
-        title={<>{stage || "Hub"}</>}
-        headerRight={<StageBadge stage={stage} seconds={seconds} />}
-      >
-        <StageCenter>
-          <Card>Unknown stage.</Card>
-        </StageCenter>
-      </Shell>
-    </TheaterBackground>
+    <div className="relative">
+      {content}
+      <EmoteStream />
+    </div>
   );
 }
 
@@ -483,7 +486,7 @@ function QuestionBlock({ question, showOptionsDimmed = false }) {
         className={[
           "grid gap-2",
           "grid-cols-1 md:grid-cols-2",
-          //howOptionsDimmed ? "opacity-60" : "",
+          // howOptionsDimmed ? "opacity-60" : "",
         ].join(" ")}
       >
         {(question?.options ?? []).map((opt, i) => (
