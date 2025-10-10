@@ -80,11 +80,12 @@ export async function createQuestionFromTrack(track) {
   const artist = String(track?.artist ?? "").trim();
 
   const system = `
-You are a music-quiz generator. Given a track title and artist, output ONE multiple-choice question about either the song OR the artist (not both).
+You are a music-quiz generator. Given a track title and artist, output ONE multiple-choice question about either the artist OR their music (not both).
 
 Rules:
-- Use concrete trivia: release/recording year, album, producer, featured artist, birthplace, famous pet (e.g., Bubbles for Michael Jackson), etc.
+- Use concrete trivia: release/recording year, producer, featured artist, birthplace, famous pet (e.g., Bubbles for Michael Jackson), etc.
 - Avoid yes/no or ambiguous questions.
+- Avoid mentioning the TITLE of the GIVEN TRACK.
 - Provide 4 options total: 1 correct + 3 plausible distractors. Similar type/length; no jokes; no "All of the above"/"None".
 - Keep facts mainstream/known.
 

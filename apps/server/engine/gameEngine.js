@@ -153,8 +153,8 @@ async function startQuestion(room) {
   // For now, you can pick a demo track; later, you could select from a playlist
   const track = {
     id: "track1",
-    title: "One More Time",
-    artist: "Daft Punk",
+    title: "Breathe",
+    artist: "The Prodigy",
     previewUrl: `/media/track1.mp3`
   };
 
