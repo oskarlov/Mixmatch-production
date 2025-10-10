@@ -1,14 +1,15 @@
 {
   "name": "mixmatch",
   "version": "1.0.0",
+  "type": "module",
   "description": "",
   "main": "index.js",
-  "scripts": {"dev:server": "pnpm -F @mixmatch/server dev",
+  "scripts": {
+    "dev:server": "pnpm -F @mixmatch/server dev",
     "dev:hub": "pnpm -F hub dev",
     "dev:player": "pnpm -F player dev",
     "dev:all": "pnpm -F @mixmatch/server dev & pnpm -F hub dev & pnpm -F player dev"
   },
-    
   "keywords": [],
   "author": "",
   "license": "ISC",
@@ -17,6 +18,8 @@
   "workspaces": [
     "apps/*",
     "packages/*"
-  ]
-  
+  ],
+  "dependencies": {
+    "@google/genai": "^1.22.0"
+  }
 }

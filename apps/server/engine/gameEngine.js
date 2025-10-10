@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { generateQuestion } from "./questionEngine.js"; // adjust path as needed
 
 
 
@@ -91,6 +92,8 @@ function progressCounts(room) {
 }
 
 /** ------------------ round engine ------------------ */
+
+/*
 function startQuestion(room) {
   clearTimers(room);
   if (room.qCount >= room.config.maxQuestions) return gameEnd(room);
@@ -139,6 +142,72 @@ function startQuestion(room) {
     }
   }, 1000);
 }
+
+*/
+
+async function startQuestion(room) {
+  clearTimers(room);
+  if (room.qCount >= room.config.maxQuestions) return gameEnd(room);
+
+  // Pick a track to generate a question for
+  // For now, you can pick a demo track; later, you could select from a playlist
+  const track = {
+    id: "track1",
+    title: "One More Time",
+    artist: "Daft Punk",
+    previewUrl: `/media/track1.mp3`
+  };
+
+  // Generate a question using Gemini
+  let q;
+  try {
+    q = await generateQuestion(track); // <-- Gemini call
+  } catch (err) {
+    console.error("Question generation failed, falling back to demo:", err);
+    // fallback to demo
+    q = nextFromPool(room);
+  }
+
+  room.stage = "question";
+  room.q = q;
+  room.answersByName = new Map();
+  room.perOptionCounts = Array(q.options.length).fill(0);
+
+  const durationMs = room.config.defaultDurationMs ?? 20000;
+  room.deadline = Date.now() + durationMs;
+  room.revealUntil = null;
+  room.resultUntil = null;
+  room.qCount += 1;
+
+  io.to(room.code).emit("question:new", {
+    id: q.id,
+    prompt: q.prompt,
+    options: q.options,
+    durationMs,
+    deadline: room.deadline,
+  });
+
+  if (q.media?.audioUrl) {
+    io.to(room.hostId).emit("question:hubMedia", {
+      id: q.id,
+      audioUrl: q.media.audioUrl,
+      durationMs,
+    });
+  }
+
+  emitTick(room);
+  const { answered, total } = progressCounts(room);
+  io.to(room.code).emit("progress:update", { answered, total });
+
+  room.timers.tick = setInterval(() => {
+    emitTick(room);
+    if (Date.now() >= room.deadline) {
+      clearInterval(room.timers.tick);
+      reveal(room);
+    }
+  }, 1000);
+}
+  
 
 function emitTick(room) {
   const seconds = Math.max(0, Math.ceil((room.deadline - Date.now()) / 1000));
