@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import {redirectToAuth} from "../../../packages/shared/spotifyAuth.js";
 // If you published the shared package with this name (recommended):
 // import { makeGameStore } from "@mixmatch/shared/gameStore";
 // Temporary relative import:
@@ -50,6 +51,9 @@ export default function Hub() {
         </Card>
 
         <div className="flex gap-2">
+          <PrimaryButton onClick={redirectToAuth}>
+            Connect to Spotify
+          </PrimaryButton>
           <PrimaryButton onClick={startGame} disabled={!canStart}>
           Start game
       </PrimaryButton>
