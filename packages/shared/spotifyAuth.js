@@ -1,4 +1,4 @@
-import { ID, SECRET } from "apiConfig.js";
+import { ID, SECRET } from "./apiConfig.js"; // "../apiConfig.js";
 
 // Code from https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow
 export async function redirectToAuth() {
@@ -28,7 +28,7 @@ export async function redirectToAuth() {
 
     const scope = 'user-read-private user-read-email';
     const authUrl = new URL("https://accounts.spotify.com/authorize")
-    const redirectUri = "temp" // LÃ¤gg till correct redirectURI som ligger i Spotify appen
+    const redirectUri = "https://halting-unsheltering-christa.ngrok-free.de" // "http://localhost:5173" // LÃ¤gg till correct redirectURI som ligger i Spotify appen
 
     // generated in the previous step
     window.localStorage.setItem('code_verifier', codeVerifier);
@@ -45,7 +45,7 @@ export async function redirectToAuth() {
     authUrl.search = new URLSearchParams(params).toString();
     window.location.href = authUrl.toString();
 }
-
+/*
 export function requestToken() {
     const urlParams = new URLSearchParams(window.location.search);
     let code = urlParams.get('code');
@@ -70,4 +70,4 @@ export function requestToken() {
     const response = await body.json();
 
     localStorage.setItem('access_token', response.access_token);
-}
+}*/
