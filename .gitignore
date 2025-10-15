@@ -8,3 +8,13 @@ coverage
 apps/*/node_modules
 packages/*/node_modules
 Docker/*/node_modules
+.pnpm-debug.log*
+.vite/
+.next/
+.vscode/
+.idea/
+Thumbs.db
+.env.local
+.env.*.local
+!.env.example
+share.zip
