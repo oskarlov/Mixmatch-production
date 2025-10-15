@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import {redirectToAuth} from "../../../packages/shared/spotifyAuth.js";
+import { useEffect, useRef, useState, useCallback } from "react";
+import {redirectToAuth, requestToken, hasSpotifyToken} from "../../server/engine/spotifyAuth.js";
 // If you published the shared package with this name (recommended):
 // import { makeGameStore } from "@mixmatch/shared/gameStore";
 // Temporary relative import:
@@ -28,13 +28,39 @@ export default function Hub() {
     const el = audioRef.current;
     el.src = media.audioUrl;
     const tryPlay = async () => {
-      try { await el.play(); } catch { /* blocked until click */ }
+      try { await el.play(); } catch {  }
     };
     tryPlay();
   }, [media]);
 
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await requestToken(); // no-op if there's no ?code=
+        // If we started an action before redirect, finish it now
+        const pending = localStorage.getItem("pending_action");
+        if (data && pending === "createRoom") {
+          localStorage.removeItem("pending_action");
+          createRoom();
+        }
+      } catch (e) {
+        console.error("Spotify token exchange failed:", e);
+      }
+    })();
+  }, [createRoom]);
+
+  const onCreate = useCallback(() => {
+    console.log("[onCreate] hasSpotifyToken?", hasSpotifyToken());
+    if (!hasSpotifyToken()) {
+      localStorage.setItem("pending_action", "createRoom");
+      redirectToAuth();            // navigates away; nothing after this runs now
+      return;
+    }
+    createRoom();                  // already connected → just create
+  }, [createRoom]);
+
   // ---- stage router ----
-  if (stage === "idle") return <Landing onCreate={createRoom} />;
+  if (stage === "idle") return <Landing onCreate={onCreate} />;
 
   if (stage === "lobby") {
     const canStart = !!code && players.length >= 1; // tweak min players if you want
@@ -51,12 +77,14 @@ export default function Hub() {
         </Card>
 
         <div className="flex gap-2">
+         {/*
           <PrimaryButton onClick={redirectToAuth}>
             Connect to Spotify
           </PrimaryButton>
+        */}
           <PrimaryButton onClick={startGame} disabled={!canStart}>
-          Start game
-      </PrimaryButton>
+            Start game
+          </PrimaryButton>
         </div>
       </Shell>
     );

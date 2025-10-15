@@ -30,6 +30,10 @@ Quick Start:
    - Server → http://localhost:8080
    - Hub → http://localhost:5173
    - Player → http://localhost:5174
+   
+   
+   If running on ngrok tunnel use this URL to open hub:
+   - Hub → https://halting-unsheltering-christa.ngrok-free.dev 
 
 6. Stop everything:
 
