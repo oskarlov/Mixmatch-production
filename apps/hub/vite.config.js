@@ -10,4 +10,6 @@ export default defineConfig({
     allowedHosts: ['halting-unsheltering-christa.ngrok-free.dev'], // <- your ngrok host
     hmr: { clientPort: 443 }, // helps HMR over HTTPS tunnels
   },
-})
+  cacheDir: '/tmp/vite-hub',
+
+});

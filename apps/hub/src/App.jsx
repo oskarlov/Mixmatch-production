@@ -4,27 +4,34 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import {redirectToAuth, requestToken, hasSpotifyToken} from "../../server/engine/spotifyAuth.js";
 // If you published the shared package with this name (recommended):
 // import { makeGameStore } from "@mixmatch/shared/gameStore";
-// Temporary relative import:
+// Temporary relative imports (keep your own paths)
+import TheaterBackground from "./components/TheaterBackground.jsx";
+import SpotlightOverlay from "./components/SpotlightOverlay.jsx";
+import CurtainOverlay from "./components/CurtainOverlay.jsx";
 import { useGameStore } from "./store";
-import LobbySettings from "./components/LobbySettings";
+import LobbySettings from "./components/LobbySettings.jsx";
+import EmoteStream from "./components/EmoteStream.jsx";
 
+const THEATRE_BG = "/images/theatre-lobby.png";
 const useGame = useGameStore;
 
-function Hub() {
+// ---- responsive thresholds for curtains (tweak to taste) ----
+const MIN_W_FOR_CURTAINS = 992;
+const MIN_H_FOR_CURTAINS = 650;
+
+export default function Hub() {
   const {
     code, players, hostId, stage, question, seconds, media,
     progress = { answered: 0, total: 0 },
     perOptionCounts = [],
     leaderboard = [],
-    createRoom, startRound, reveal, nextQuestion,
-    startGame, playAgain, toLobby,
+    createRoom, startGame, nextQuestion, playAgain, toLobby,
   } = useGame();
 
-  // ---- hub audio (host-only media) ----
+  /* ---------------- Hub audio (host-only media) ---------------- */
   const audioRef = useRef(null);
   const [autoplayReady, setAutoplayReady] = useState(false);
 
-  // Try to autoplay when media changes (most browsers require one user gesture first)
   useEffect(() => {
     if (!media?.audioUrl || !audioRef.current) return;
     const el = audioRef.current;
@@ -65,20 +72,21 @@ function Hub() {
 
   // ---- stage router ----
   if (stage === "idle") return <Landing onCreate={onCreate} />;
+  /* ---------------- Spotlight + Curtains orchestration ---------------- */
+  const [spotlightActive, setSpotlightActive] = useState(false);
+  const [spotlightEverSettled, setSpotlightEverSettled] = useState(false);
 
-  if (stage === "lobby") {
-    const canStart = !!code && players.length >= 1; // tweak min players if you want
-    return (
-      <Shell headerRight={<StageBadge stage={stage} />}>
-        <RoomHeader code={code} />
-        <div className="mt-6">
-          <LobbySettings />
-        </div>
+  // Curtains cycle control (close→open before each question)
+  const [curtainKey, setCurtainKey] = useState(0);
+  const [curtainRunning, setCurtainRunning] = useState(false);
+  const [allowFlicker, setAllowFlicker] = useState(false);
 
-        <Card title="Players">
-          <PlayerGrid players={players} hostId={hostId} />
-          {players.length === 0 && <EmptyNote>No players yet…</EmptyNote>}
-        </Card>
+  // Responsive: disable curtains if window is small / not “full-ish”
+  const [curtainsEnabled, setCurtainsEnabled] = useState(true);
+  useEffect(() => {
+    const compute = () =>
+      window.innerWidth >= MIN_W_FOR_CURTAINS &&
+      window.innerHeight >= MIN_H_FOR_CURTAINS;
 
         <div className="flex gap-2">
          {/*
@@ -93,84 +101,324 @@ function Hub() {
       </Shell>
     );
   }
+    const sync = () => setCurtainsEnabled(compute());
+    sync();
+    window.addEventListener("resize", sync);
+    document.addEventListener("fullscreenchange", sync);
+    return () => {
+      window.removeEventListener("resize", sync);
+      document.removeEventListener("fullscreenchange", sync);
+    };
+  }, []);
 
-  if (stage === "question") {
-    return (
-      <Shell headerRight={<StageBadge stage={stage} seconds={seconds} />}>
-        <RoomHeader code={code} />
-        <AudioBlock
-          audioRef={audioRef}
-          autoplayReady={autoplayReady}
-          setAutoplayReady={setAutoplayReady}
-        />
-        <QuestionBlock question={question} showOptionsDimmed />
-        <Card>
-          <div className="text-sm text-slate-400">
-            Answers: {progress.answered}/{progress.total}
+  // Track the previous stage so we can hide synchronously on the very first render
+  const lastStageRef = useRef(stage);
+  const justEnteredQuestion = lastStageRef.current !== "question" && stage === "question";
+  useEffect(() => {
+    lastStageRef.current = stage;
+  }, [stage]);
+
+  // Drive stage transitions (NOTE: intentionally NOT dependent on curtainsEnabled)
+  useEffect(() => {
+    if (stage === "idle") {
+      setSpotlightActive(false);
+      setSpotlightEverSettled(false);
+      setAllowFlicker(false);
+      setCurtainRunning(false);
+      return;
+    }
+
+    if (stage === "lobby") {
+      // No curtain animation in lobby; no spotlight either.
+      setSpotlightActive(false);
+      setAllowFlicker(false);
+      setCurtainRunning(false);
+      return;
+    }
+
+    if (stage === "question") {
+      // Prepare: reset spotlight and decide how to kick the sequence
+      setSpotlightActive(true);
+      setSpotlightEverSettled(false);
+
+      if (curtainsEnabled /* snapshot only; not a dependency */) {
+        setAllowFlicker(false);      // enable flicker after curtains open
+        setCurtainRunning(true);
+        setCurtainKey((k) => k + 1); // trigger per-question cycle (one time)
+      } else {
+        // No curtains mounted → start flicker immediately
+        setCurtainRunning(false);
+        setAllowFlicker(true);
+      }
+      return;
+    }
+
+    if (stage === "reveal" || stage === "result" || stage === "gameover") {
+      // Keep steady light on non-question stages
+      setSpotlightActive(true);
+      setAllowFlicker(false);
+      return;
+    }
+  }, [stage, question?.id]); // <-- IMPORTANT: no curtainsEnabled here
+
+  // “Flicker is running” helper
+  const isFlicker = stage === "question" && !spotlightEverSettled && allowFlicker;
+
+  // --- Visibility logic with synchronous guard against 1-frame flash ---
+  // During the very first render after entering "question", treat as NOT settled,
+  // even if state from previous stage still says settled=true.
+  const settledForRender = !justEnteredQuestion && spotlightEverSettled;
+  const questionStageHidden = stage === "question" && (curtainRunning || !settledForRender);
+
+  /* ---------------- Stage router -> assemble into `content` ---------------- */
+  let content = null;
+
+  if (stage === "idle") {
+    content = <Landing onCreate={createRoom} />;
+  } else if (stage === "lobby") {
+    const canStart = !!code && players.length >= 1;
+    content = (
+      <TheaterBackground bgUrl={THEATRE_BG}>
+        {/* No curtains in lobby per your preference */}
+        <Shell
+          wide
+          title={
+            <span className="inline-flex items-baseline gap-2">
+              <span className="uppercase text-xs tracking-widest text-mist-400">Room Code</span>
+              <code className="font-mono tracking-widest text-3xl md:text-4xl">
+                {code || "—"}
+              </code>
+            </span>
+          }
+          headerRight={<StageBadge stage={stage} />}
+        >
+          <div className="mx-auto w-full max-w-[900px] grid gap-2 items-start grid-cols-1 md:grid-cols-2">
+            <Card title={`Players (${players.length})`}>
+              <PlayerGrid players={players} hostId={hostId} />
+              {players.length === 0 && <EmptyNote>No players yet…</EmptyNote>}
+            </Card>
+            <Card title="Game settings">
+              <div className="space-y-4 w-full">
+                <LobbySettings />
+                <PrimaryButton
+                  onClick={startGame}
+                  disabled={!canStart}
+                  aria-label="Start game"
+                  className="w-full text-lg px-5 py-3"
+                >
+                  Start game
+                </PrimaryButton>
+              </div>
+            </Card>
           </div>
-        </Card>
-      </Shell>
+        </Shell>
+      </TheaterBackground>
     );
-  }
+  } else if (stage === "question") {
+    // Only animate curtains if we explicitly started a cycle this round.
+    const shouldAnimateCurtains = curtainRunning;
+    const curtainCycleKey = shouldAnimateCurtains ? curtainKey : -1;
 
-  if (stage === "reveal") {
-    return (
-      <Shell headerRight={<StageBadge stage={stage} seconds={seconds} label="Reveal ends in" />}>
-        <RoomHeader code={code} />
-        <RevealBlock
-          question={question}
-          perOptionCounts={perOptionCounts}
-        />
-      </Shell>
-    );
-  }
-
-  if (stage === "result") {
-    return (
-      <Shell headerRight={<StageBadge stage={stage} seconds={seconds} label="Next question in" />}>
-        <RoomHeader code={code} />
-        <LeaderboardBlock leaderboard={leaderboard} />
-        {/* Manual next button (optional): server already auto-advances */}
-        {typeof nextQuestion === "function" && (
-          <div className="mt-4">
-            <SecondaryButton onClick={nextQuestion}>Next now</SecondaryButton>
-          </div>
+    content = (
+      <TheaterBackground bgUrl={THEATRE_BG}>
+        {/* Curtains: animate only when curtainRunning === true.
+            On resize (mount/unmount), we pass -1 to keep them statically open-at-edges. */}
+        {curtainsEnabled && (
+          <CurtainOverlay
+            cycleKey={curtainCycleKey}
+            topOffsetPx={0}
+            edgePx={72}
+            onCycleStart={() => setCurtainRunning(true)}
+            onCycleEnd={() => {
+              setCurtainRunning(false);
+              setAllowFlicker(true);           // spotlight flicker starts now
+            }}
+          />
         )}
-      </Shell>
+
+        {/* Spotlight controls reveal timing; perfect circle handled inside */}
+        <SpotlightOverlay
+          active={spotlightActive}
+          flicker={isFlicker}
+          onSettled={() => {
+            setSpotlightEverSettled(true);
+            setAllowFlicker(false);            // lock into steady beam after settling
+          }}
+          holdOpacity={0.6}
+          center={[0.5, 0.5]}
+          duration={1.6}
+          exitDuration={0.8}
+        />
+
+        {/* Keep header visible; hide body while curtains run OR until settle (synchronously guarded) */}
+        <Shell
+          title={<code className="font-mono tracking-widest text-xl md:text-2xl">{code || "—"}</code>}
+          headerRight={<StageBadge stage={stage} seconds={seconds} />}
+          bodyHidden={questionStageHidden}
+        >
+          <StageCenter>
+            {settledForRender ? (
+              <>
+                <QuestionBlock question={question} showOptionsDimmed />
+                <AudioBlock
+                  audioRef={audioRef}
+                  autoplayReady={autoplayReady}
+                  setAutoplayReady={setAutoplayReady}
+                />
+              </>
+            ) : (
+              <Card><div className="opacity-60">Preparing question…</div></Card>
+            )}
+            <Card>
+              <div className="text-sm text-mist-300 text-center">
+                Answers: {progress.answered}/{progress.total}
+              </div>
+            </Card>
+          </StageCenter>
+        </Shell>
+      </TheaterBackground>
     );
-  }
-  if (stage === "gameover") {
-  return (
-    <Shell headerRight={<StageBadge stage={stage} />}>
-      <RoomHeader code={code} />
-      <LeaderboardBlock leaderboard={leaderboard} />
-      <div className="flex gap-2">
-        <PrimaryButton onClick={playAgain}>Play again</PrimaryButton>
-        <SecondaryButton onClick={toLobby}>Back to lobby</SecondaryButton>
-      </div>
-    </Shell>
+  } else if (stage === "reveal") {
+    content = (
+      <TheaterBackground bgUrl={THEATRE_BG}>
+        {/* Curtains hidden on small screens automatically; static open otherwise */}
+        {curtainsEnabled && <CurtainOverlay cycleKey={-1} topOffsetPx={0} edgePx={72} />}
+        <SpotlightOverlay
+          active={spotlightActive}
+          flicker={false}
+          holdOpacity={0.6}
+          center={[0.5, 0.5]}
+          duration={1.6}
+          exitDuration={0.8}
+        />
+        <Shell
+          title={<code className="font-mono tracking-widest text-xl md:text-2xl">{code || "—"}</code>}
+          headerRight={<StageBadge stage={stage} seconds={seconds} label="Reveal ends in" />}
+        >
+          <StageCenter>
+            <RevealBlock question={question} perOptionCounts={perOptionCounts} />
+          </StageCenter>
+        </Shell>
+      </TheaterBackground>
+    );
+  } else if (stage === "result") {
+    content = (
+      <TheaterBackground bgUrl={THEATRE_BG}>
+        {curtainsEnabled && <CurtainOverlay cycleKey={-1} topOffsetPx={0} edgePx={72} />}
+        <SpotlightOverlay
+          active={spotlightActive}
+          flicker={false}
+          holdOpacity={0.6}
+          center={[0.5, 0.5]}
+          duration={1.6}
+          exitDuration={0.8}
+        />
+        <Shell
+          title={<code className="font-mono tracking-widest text-xl md:text-2xl">{code || "—"}</code>}
+          headerRight={<StageBadge stage={stage} seconds={seconds} label="Next question in" />}
+        >
+          <StageCenter>
+            <LeaderboardBlock leaderboard={leaderboard} compact />
+            {typeof nextQuestion === "function" && (
+              <div className="mt-2">
+                <SecondaryButton onClick={nextQuestion}>Next now</SecondaryButton>
+              </div>
+            )}
+          </StageCenter>
+        </Shell>
+      </TheaterBackground>
+    );
+  } else if (stage === "gameover") {
+    content = (
+      <TheaterBackground bgUrl={THEATRE_BG}>
+        {curtainsEnabled && <CurtainOverlay cycleKey={-1} topOffsetPx={0} edgePx={72} />}
+        <SpotlightOverlay
+          active={spotlightActive}
+          flicker={false}
+          holdOpacity={0.6}
+          center={[0.5, 0.5]}
+          duration={1.6}
+          exitDuration={0.8}
+        />
+        <Shell
+          title={<code className="font-mono tracking-widest text-xl md:text-2xl">{code || "—"}</code>}
+          headerRight={<StageBadge stage={stage} />}
+        >
+          <StageCenter>
+            <LeaderboardBlock leaderboard={leaderboard} />
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <PrimaryButton onClick={playAgain}>Play again</PrimaryButton>
+              <SecondaryButton onClick={toLobby}>Back to lobby</SecondaryButton>
+            </div>
+          </StageCenter>
+        </Shell>
+      </TheaterBackground>
+    );
+  } else {
+    // Fallback
+    content = (
+      <TheaterBackground bgUrl={THEATRE_BG}>
+        {curtainsEnabled && <CurtainOverlay cycleKey={-1} topOffsetPx={0} edgePx={72} />}
+        <SpotlightOverlay
+          active={spotlightActive}
+          flicker={false}
+          holdOpacity={0.6}
+          center={[0.5, 0.5]}
+          duration={1.6}
+          exitDuration={0.8}
+        />
+        <Shell
+          title={<>{stage || "Hub"}</>}
+          headerRight={<StageBadge stage={stage} seconds={seconds} />}
+        >
+          <StageCenter>
+            <Card>Unknown stage.</Card>
+          </StageCenter>
+        </Shell>
+      </TheaterBackground>
     );
   }
 
-  // Fallback
+  // --- Mount EmoteStream ONCE so it never resets on stage changes ---
   return (
-    <Shell headerRight={<StageBadge stage={stage} seconds={seconds} />}>
-      <RoomHeader code={code} />
-      <Card>Unknown stage.</Card>
-    </Shell>
+    <div className="relative">
+      {content}
+      <EmoteStream />
+    </div>
   );
 }
 
 /* ================== UI Building Blocks ================== */
 
-function Shell({ children, headerRight }) {
+function Shell({ children, headerRight, wide = false, title = <>Hub</>, bodyHidden = false }) {
   return (
-    <div className="min-h-dvh bg-slate-950 text-slate-100 p-6">
-      <div className="max-w-3xl mx-auto space-y-4">
-        <header className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold">Hub</h1>
-          {headerRight}
+    <div className="relative z-10 min-h-dvh text-mist-100 font-sans px-4 sm:px-6 lg:px-8 py-6">
+      <div
+        className={
+          (wide ? "mx-auto max-w-[920px]" : "mx-auto max-w-[900px]") +
+          " space-y-4 relative overflow-hidden"
+        }
+      >
+        <header className="flex items-center justify-between gap-4">
+          <h1 className="tracking-wide text-balance text-2xl md:text-3xl font-semibold">
+            {title}
+          </h1>
+          <div className="shrink-0">{headerRight}</div>
         </header>
+
+        {/* Only the body gets hidden during curtains/settling */}
+        <div className={bodyHidden ? "opacity-0 pointer-events-none select-none" : ""}>
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StageCenter({ children }) {
+  return (
+    <div className="min-h-[70dvh] grid place-items-center">
+      <div className="w-full max-w-[780px] mx-auto flex flex-col items-stretch gap-4">
         {children}
       </div>
     </div>
@@ -178,67 +426,132 @@ function Shell({ children, headerRight }) {
 }
 
 function Landing({ onCreate }) {
+  // Where to send players
+  const playerUrl =
+    (import.meta && import.meta.env && import.meta.env.VITE_PLAYER_URL) ||
+    `${window.location.origin.replace(/\/$/, "")}/player`;
+
+  const goToPlayer = () => window.open(playerUrl, "_self");
+
+  const [copied, setCopied] = useState(false);
+  const copyJoinLink = async () => {
+    try {
+      await navigator.clipboard.writeText(playerUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {}
+  };
+
   return (
-    <div className="min-h-dvh grid place-items-center bg-slate-950 text-slate-100 p-6">
-      <PrimaryButton onClick={onCreate}>Create room</PrimaryButton>
-    </div>
+    <TheaterBackground bgUrl={THEATRE_BG}>
+      <div className="relative z-10 min-h-dvh text-mist-100 px-4 sm:px-6 lg:px-8 py-10">
+        <div className="mx-auto max-w-[900px] space-y-8">
+          {/* Header */}
+          <header className="flex items-center justify-between gap-4">
+            <h1 className="text-3xl md:text-4xl tracking-wide font-semibold font-display">
+              MixMatch
+            </h1>
+          </header>
+
+          {/* Description */}
+          <section className="grid gap-2">
+            <p className="text-mist-300 max-w-prose text-balance">
+              Host a music quiz. Friends join from their phones or desktop via the player.
+            </p>
+          </section>
+
+          {/* Join first */}
+          <section className="w-full max-w-sm mx-auto grid gap-2">
+            <SecondaryButton
+              onClick={goToPlayer}
+              aria-label="Go to player to join a room"
+              className="w-full text-lg px-5 py-3"
+            >
+              Join room
+            </SecondaryButton>
+          
+          </section>
+
+          {/* Then create */}
+          <section className="w-full max-w-sm mx-auto">
+            <div className="text-xs uppercase tracking-wide text-mist-400 mt-8 mb-2">
+              Or host a new game
+            </div>
+            <PrimaryButton
+              onClick={onCreate}
+              aria-label="Create a new room"
+              className="w-full text-lg px-5 py-3"
+            >
+              Create room
+            </PrimaryButton>
+          </section>
+        </div>
+      </div>
+    </TheaterBackground>
   );
 }
 
+
 function StageBadge({ stage, seconds, label = "Time left" }) {
   return (
-    <span className="text-sm text-slate-400 inline-flex items-center gap-2">
-      Stage: <b className="text-slate-200">{stage}</b>
+    <span className="text-sm text-mist-300 inline-flex items-center gap-2">
+      <span className="hidden sm:inline">Stage:</span>
+      <b className="text-mist-100">{stage}</b>
       {Number.isFinite(seconds) && seconds > 0 && (
-        <span className="px-2 py-1 rounded-full bg-slate-800">
-          <span className="opacity-70 mr-1">{label}</span>
-          <span className="font-mono">{seconds}s</span>
+        <span className="px-2 py-1 rounded-full bg-black/40 ring-1 ring-white/10">
+          <span className="opacity-70 mr-1 hidden md:inline">{label}</span>
+          <span className="font-mono tabular-nums">{seconds}s</span>
         </span>
       )}
     </span>
   );
 }
 
-function RoomHeader({ code }) {
+function Card({ title, children, className = "" }) {
   return (
-    <div className="flex items-center gap-2">
-      <Card>
-        Room code:{" "}
-        <b className="tracking-widest font-mono text-lg">{code || "—"}</b>
-      </Card>
-    </div>
-  );
-}
-
-function Card({ title, children }) {
-  return (
-    <div className="rounded-xl bg-slate-900 p-4">
-      {title && <div className="text-sm text-slate-400 mb-2">{title}</div>}
+    <div className={className}>
+      {title && (
+        <div className="text-xs uppercase tracking-wide text-mist-400 mb-2">
+          {title}
+        </div>
+      )}
       {children}
     </div>
   );
 }
 
 function EmptyNote({ children }) {
-  return <div className="text-slate-500">{children}</div>;
+  return <div className="text-mist-400">{children}</div>;
 }
 
-function PrimaryButton({ children, ...props }) {
+function PrimaryButton({ children, className = "", ...props }) {
   return (
     <button
       {...props}
-      className="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40"
+      className={[
+        "px-3 py-2 rounded-lg",
+        "bg-crimson-500 hover:bg-crimson-400 disabled:opacity-40",
+        "text-mist-100",
+        "transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-400",
+        className,
+      ].join(" ")}
     >
       {children}
     </button>
   );
 }
 
-function SecondaryButton({ children, ...props }) {
+function SecondaryButton({ children, className = "", ...props }) {
   return (
     <button
       {...props}
-      className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700"
+      className={[
+        "px-3 py-2 rounded-lg",
+        "bg-ink-800/70 hover:bg-ink-700/70",
+        "text-mist-100",
+        "transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold-400",
+        className,
+      ].join(" ")}
     >
       {children}
     </button>
@@ -251,7 +564,7 @@ function AudioBlock({ audioRef, autoplayReady, setAutoplayReady }) {
     <Card title="Hub audio">
       <audio ref={audioRef} controls className="w-full" />
       {!autoplayReady && (
-        <div className="mt-2">
+        <div className="mt-2 flex justify-center">
           <SecondaryButton
             onClick={() => {
               audioRef.current?.play();
@@ -271,11 +584,24 @@ function AudioBlock({ audioRef, autoplayReady, setAutoplayReady }) {
 function QuestionBlock({ question, showOptionsDimmed = false }) {
   return (
     <Card title="Question">
-      <div className="text-lg mb-3">{question?.prompt ?? "—"}</div>
-      <ol className={`grid grid-cols-2 gap-2 ${showOptionsDimmed ? "opacity-60" : ""}`}>
+      <div className="font-display text-lg md:text-xl mb-3 leading-snug text-balance text-center">
+        {question?.prompt ?? "—"}
+      </div>
+      <ol
+        className={[
+          "grid gap-2",
+          "grid-cols-1 md:grid-cols-2",
+          // howOptionsDimmed ? "opacity-60" : "",
+        ].join(" ")}
+      >
         {(question?.options ?? []).map((opt, i) => (
-          <li key={i} className="rounded-lg px-3 py-2 bg-slate-800">
-            {String.fromCharCode(65 + i)}. {opt}
+          <li key={i} className="rounded-lg px-3 py-2 bg-ink-800/70 break-words">
+            <div className="flex items-start gap-2">
+              <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-ink-700 font-medium">
+                {String.fromCharCode(65 + i)}
+              </span>
+              <span className="leading-snug">{opt}</span>
+            </div>
           </li>
         ))}
       </ol>
@@ -285,48 +611,99 @@ function QuestionBlock({ question, showOptionsDimmed = false }) {
 
 function RevealBlock({ question, perOptionCounts }) {
   const correct = question?.correctIndex;
+  const total = (perOptionCounts ?? []).reduce((a, b) => a + (b || 0), 0);
+
   return (
     <Card title="Correct answer">
-      <div className="text-lg mb-3">{question?.prompt ?? "—"}</div>
-      <ol className="grid grid-cols-2 gap-2">
-        {(question?.options ?? []).map((opt, i) => (
-          <li
-            key={i}
-            className={[
-              "rounded-lg px-3 py-2",
-              i === correct ? "bg-emerald-700/40 outline outline-2 outline-emerald-500" : "bg-slate-800",
-            ].join(" ")}
-          >
-            <div className="font-medium">
-              {String.fromCharCode(65 + i)}. {opt}
-            </div>
-            <div className="text-xs text-slate-400 mt-1">
-              {perOptionCounts?.[i] ?? 0} picks
-            </div>
-          </li>
-        ))}
+      <div className="font-display text-lg md:text-xl mb-3 leading-snug text-balance text-center">
+        {question?.prompt ?? "—"}
+      </div>
+      <ol className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        {(question?.options ?? []).map((opt, i) => {
+          const count = perOptionCounts?.[i] ?? 0;
+          const pct = total ? Math.round((100 * count) / total) : 0;
+          const isCorrect = i === correct;
+          return (
+            <li
+              key={i}
+              className={[
+                "rounded-lg px-3 py-2",
+                isCorrect
+                  ? "bg-emerald-700/40 outline outline-2 outline-emerald-500/70"
+                  : "bg-ink-800/70",
+              ].join(" ")}
+            >
+              <div className="font-medium">
+                {String.fromCharCode(65 + i)}. {opt}
+              </div>
+              <div className="mt-2 h-1.5 rounded bg-ink-700/70 overflow-hidden">
+                <div
+                  className={"h-full " + (isCorrect ? "bg-emerald-500" : "bg-crimson-500")}
+                  style={{ width: pct + "%" }}
+                />
+              </div>
+              <div className="text-xs text-mist-400 mt-1">
+                {count} picks{total ? ` (${pct}%)` : ""}
+              </div>
+            </li>
+          );
+        })}
       </ol>
     </Card>
   );
 }
 
-function LeaderboardBlock({ leaderboard }) {
+function LeaderboardBlock({ leaderboard, compact = false }) {
+  const wrap = compact
+    ? "w-full max-w-[560px] mx-auto rounded-xl bg-ink-800/70"
+    : "w-full rounded-xl bg-ink-800/70";
+
   return (
-    <Card title="Scores">
-      <div className="rounded-xl bg-slate-800">
+    <Card>
+      <div
+        className={
+          compact
+            ? "text-center font-display text-2xl md:text-3xl mb-3"
+            : "text-xs uppercase tracking-wide text-mist-400 mb-2"
+        }
+      >
+        Scores
+      </div>
+
+      <div className={wrap}>
         {leaderboard.length === 0 && (
-          <div className="p-4 text-slate-400">No scores yet…</div>
+          <div className="p-4 text-mist-400 text-center">No scores yet…</div>
         )}
         {leaderboard.map((p, idx) => (
           <div
             key={p.id}
-            className="flex items-center justify-between p-3 border-b border-slate-700 last:border-b-0"
+            className={
+              (compact ? "p-2" : "p-3") +
+              " flex items-center justify-between border-b border-ink-700/60 last:border-b-0"
+            }
           >
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 min-w-0">
               <span className="w-6 text-right opacity-70">{idx + 1}.</span>
-              <span className="font-semibold">{p.name}</span>
+              <span
+                className={
+                  "font-semibold truncate " +
+                  (compact ? "max-w-[12ch]" : "max-w-[18ch] md:max-w-none")
+                }
+                title={p.name}
+              >
+                {p.name}
+              </span>
             </div>
-            <span className="font-mono">{p.score}</span>
+            <span
+              className={
+                "inline-flex items-center justify-center rounded " +
+                "bg-ink-700/70 font-mono tabular-nums " +
+                (compact ? "text-sm min-w-[3.25rem] px-2 py-0.5" : "min-w-[3.75rem] px-3 py-1")
+              }
+              title={`${p.score}`}
+            >
+              {p.score}
+            </span>
           </div>
         ))}
       </div>
@@ -338,17 +715,17 @@ function LeaderboardBlock({ leaderboard }) {
 
 function PlayerGrid({ players, hostId }) {
   return (
-    <ul className="grid sm:grid-cols-2 gap-2">
+    <ul className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2">
       {players.map((p) => (
         <li
           key={p.id}
-          className="rounded-lg bg-slate-800 px-3 py-2 flex items-center justify-between"
+          className="rounded-lg bg-ink-800/80 px-3 py-2 flex items-center justify-between"
         >
-          <span>
+          <span className="truncate max-w-[20ch] md:max-w-none">
             {p.name}
             {p.id === hostId ? " (host)" : ""}
           </span>
-          <span className="text-slate-300">{p.score ?? 0}</span>
+          <span className="text-mist-300 font-mono tabular-nums">{p.score ?? 0}</span>
         </li>
       ))}
     </ul>

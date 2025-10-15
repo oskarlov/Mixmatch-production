@@ -4,6 +4,11 @@ import { io } from "socket.io-client";
 let s;
 
 export function getSocket(url) {
+  // Reuse across duplicate bundles
+  if (typeof window !== "undefined" && window.__MIXMATCH_SOCKET__) {
+    s = window.__MIXMATCH_SOCKET__;
+    return s;
+  }
   if (s) return s;
 
   const resolvedUrl =
@@ -17,12 +22,17 @@ export function getSocket(url) {
     "http://localhost:8080";
 
   s = io(resolvedUrl, { transports: ["websocket"], autoConnect: true });
+
+  if (typeof window !== "undefined") {
+    window.__MIXMATCH_SOCKET__ = s;
+  }
   return s;
 }
 
 export function resetSocket() {
   if (s) {
-    s.disconnect();
+    try { s.disconnect(); } catch {}
+    if (typeof window !== "undefined") delete window.__MIXMATCH_SOCKET__;
     s = null;
   }
 }

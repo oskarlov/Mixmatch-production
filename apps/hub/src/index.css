@@ -1,70 +1,69 @@
+/* === Fonts === */
+@import url("https://fonts.googleapis.com/css2?family=Fredoka:wght@300..700&family=Archivo+Black&display=swap");
+
+/* Tailwind v4 core */
 @import "tailwindcss";
 
-:root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+/* === Theme tokens (Tailwind v4 @theme) ===
+   Warm charcoal backgrounds + neutral-warm text.
+   Your existing utilities keep working: bg-ink-950, text-mist-100, bg-crimson-500, outline-gold-400, etc.
+*/
+@theme {
+  /* Fonts */
+  --font-sans: "Fredoka", system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", sans-serif;
+  --font-display: "Archivo Black", "Fredoka", system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", sans-serif;
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  /* --- Warm Charcoal palette (no blue) --- */
+  /* Backgrounds */
+  --color-ink-950: #0c0b0b;  /* near-black, warm */
+  --color-ink-900: #111010;  /* page/elevated bg */
+  --color-ink-800: #171515;  /* surfaces */
+  --color-ink-700: #201d1d;  /* subtle element bg */
 
-  font-synthesis: none;
+  /* Text (neutral-warm) */
+  --color-mist-100: #eee9e6; /* primary text */
+  --color-mist-300: #cfc6c0; /* secondary */
+  --color-mist-400: #b2a8a2; /* muted labels */
+
+  /* Primary/CTA (theater crimson) */
+  --color-crimson-600: #8f1626; /* pressed/active */
+  --color-crimson-500: #b11a2e; /* default */
+  --color-crimson-400: #c92a40; /* hover */
+
+  /* Accents (subtle gold for focus/highlights) */
+  --color-gold-500: #edc04b;
+  --color-gold-400: #f5d77a;
+
+  /* Utility (feedback) */
+  --color-emerald-500: #10b981; /* e.g., “correct” */
+}
+
+/* === Global base === */
+html, body, #root {
+  height: 100%;
+}
+
+html, body {
+  background: var(--color-ink-950);
+  color: var(--color-mist-100);
+  font-family: var(--font-sans);
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
+/* Optional: selection color */
+::selection {
+  background: color-mix(in oklab, var(--color-crimson-500) 35%, black);
+  color: white;
 }
 
-body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
-}
+/* Optional: links tuned for dark UI */
+a { color: var(--color-gold-400); }
+a:hover { color: var(--color-gold-500); }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
-}
-
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
+/* Optional: focus ring fallback */
+:focus-visible {
+  outline: 2px solid var(--color-gold-400);
+  outline-offset: 2px;
 }
