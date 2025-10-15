@@ -1,7 +1,7 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom"; // Gjorde om App.jsx till en router
-import SpotifyCallback from "./SpotifyCallback"; // Hantera redirectToAuth problem
+import { BrowserRouter, Routes, Route } from "react-router-dom"; // Router
+import SpotifyCallback from "./SpotifyCallback";                  // Handles token exchange
 import { useEffect, useRef, useState, useCallback } from "react";
-import {redirectToAuth, requestToken, hasSpotifyToken} from "../../server/engine/spotifyAuth.js";
+import { redirectToAuth, hasSpotifyToken } from "../../server/engine/spotifyAuth.js";
 // If you published the shared package with this name (recommended):
 // import { makeGameStore } from "@mixmatch/shared/gameStore";
 // Temporary relative imports (keep your own paths)
@@ -19,7 +19,7 @@ const useGame = useGameStore;
 const MIN_W_FOR_CURTAINS = 992;
 const MIN_H_FOR_CURTAINS = 650;
 
-export default function Hub() {
+function Hub() {
   const {
     code, players, hostId, stage, question, seconds, media,
     progress = { answered: 0, total: 0 },
@@ -37,41 +37,21 @@ export default function Hub() {
     const el = audioRef.current;
     el.src = media.audioUrl;
     const tryPlay = async () => {
-      try { await el.play(); } catch {  }
+      try { await el.play(); } catch {}
     };
     tryPlay();
   }, [media]);
 
-  // Förflyttad till SpotifyCallback.jsx
-  /* 
-  useEffect(() => {
-    (async () => {
-      try {
-        const data = await requestToken(); // no-op if there's no ?code=
-        // If we started an action before redirect, finish it now
-        const pending = localStorage.getItem("pending_action");
-        if (data && pending === "createRoom") {
-          localStorage.removeItem("pending_action");
-          createRoom();
-        }
-      } catch (e) {
-        console.error("Spotify token exchange failed:", e);
-      }
-    })();
-  }, [createRoom]);
-  */
+  // Create room, but bounce to Spotify auth if needed
   const onCreate = useCallback(() => {
-    console.log("[onCreate] hasSpotifyToken?", hasSpotifyToken());
     if (!hasSpotifyToken()) {
       localStorage.setItem("pending_action", "createRoom");
-      redirectToAuth();            // navigates away; nothing after this runs now
+      redirectToAuth(); // navigates away
       return;
     }
-    createRoom();                  // already connected → just create
+    createRoom();
   }, [createRoom]);
 
-  // ---- stage router ----
-  if (stage === "idle") return <Landing onCreate={onCreate} />;
   /* ---------------- Spotlight + Curtains orchestration ---------------- */
   const [spotlightActive, setSpotlightActive] = useState(false);
   const [spotlightEverSettled, setSpotlightEverSettled] = useState(false);
@@ -87,20 +67,6 @@ export default function Hub() {
     const compute = () =>
       window.innerWidth >= MIN_W_FOR_CURTAINS &&
       window.innerHeight >= MIN_H_FOR_CURTAINS;
-
-        <div className="flex gap-2">
-         {/*
-          <PrimaryButton onClick={redirectToAuth}>
-            Connect to Spotify
-          </PrimaryButton>
-        */}
-          <PrimaryButton onClick={startGame} disabled={!canStart}>
-            Start game
-          </PrimaryButton>
-        </div>
-      </Shell>
-    );
-  }
     const sync = () => setCurtainsEnabled(compute());
     sync();
     window.addEventListener("resize", sync);
@@ -111,7 +77,7 @@ export default function Hub() {
     };
   }, []);
 
-  // Track the previous stage so we can hide synchronously on the very first render
+  // Track previous stage to avoid 1-frame flash on first question render
   const lastStageRef = useRef(stage);
   const justEnteredQuestion = lastStageRef.current !== "question" && stage === "question";
   useEffect(() => {
@@ -165,8 +131,6 @@ export default function Hub() {
   const isFlicker = stage === "question" && !spotlightEverSettled && allowFlicker;
 
   // --- Visibility logic with synchronous guard against 1-frame flash ---
-  // During the very first render after entering "question", treat as NOT settled,
-  // even if state from previous stage still says settled=true.
   const settledForRender = !justEnteredQuestion && spotlightEverSettled;
   const questionStageHidden = stage === "question" && (curtainRunning || !settledForRender);
 
@@ -174,7 +138,7 @@ export default function Hub() {
   let content = null;
 
   if (stage === "idle") {
-    content = <Landing onCreate={createRoom} />;
+    content = <Landing onCreate={onCreate} />;
   } else if (stage === "lobby") {
     const canStart = !!code && players.length >= 1;
     content = (
@@ -469,7 +433,6 @@ function Landing({ onCreate }) {
             >
               Join room
             </SecondaryButton>
-          
           </section>
 
           {/* Then create */}
@@ -490,7 +453,6 @@ function Landing({ onCreate }) {
     </TheaterBackground>
   );
 }
-
 
 function StageBadge({ stage, seconds, label = "Time left" }) {
   return (
@@ -591,7 +553,7 @@ function QuestionBlock({ question, showOptionsDimmed = false }) {
         className={[
           "grid gap-2",
           "grid-cols-1 md:grid-cols-2",
-          // howOptionsDimmed ? "opacity-60" : "",
+          // showOptionsDimmed ? "opacity-60" : "",
         ].join(" ")}
       >
         {(question?.options ?? []).map((opt, i) => (

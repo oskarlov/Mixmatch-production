@@ -1,15 +1,12 @@
-// apps/server/src/gameEngine.js (or adjust path)
 // Game engine that runs a quiz over a list of tracks, one per round.
-
 import crypto from "node:crypto";
-import { generateQuestion } from "./questionEngine.js"; // adjust path if needed
+import { generateQuestion } from "./questionEngine.js"; // question/gemini plumbing
 
 export function registerGameEngine(io, mediaDir) {
   const rooms = new Map();
 
   /** ------------------ Track source (hardcoded for now) ------------------ */
-  // Provide at least { id, title, artist, previewUrl? }
-  // previewUrl can be a hosted snippet or a local /media/<file> you serve to the hub
+  // Provide at least { id, title, artist, previewUrl? }.
   const HARDCODED_TRACKS = [
     { id: "t1",  title: "Billie Jean",                 artist: "Michael Jackson" },
     { id: "t2",  title: "Smells Like Teen Spirit",     artist: "Nirvana" },
@@ -81,19 +78,16 @@ export function registerGameEngine(io, mediaDir) {
   }
 
   /** ------------------ round engine ------------------ */
-
   async function startQuestion(room) {
     clearTimers(room);
     if (room.qCount >= room.config.maxQuestions) return gameEnd(room);
     if (room.trackIdx >= room.tracks.length) return gameEnd(room);
 
-    // Select the next track in sequence
     const track = room.tracks[room.trackIdx];
 
-    // Generate a question using Gemini; fallback if needed
     let q;
     try {
-      q = await generateQuestion(track);
+      q = await generateQuestion(track); // Gemini-backed generator
     } catch (err) {
       console.error("Question generation failed; using fallback:", err);
       // Fallback: simple artist question
@@ -107,7 +101,6 @@ export function registerGameEngine(io, mediaDir) {
       };
     }
 
-    // Advance the track cursor now that we have a question
     room.trackIdx += 1;
 
     room.stage = "question";
@@ -130,7 +123,7 @@ export function registerGameEngine(io, mediaDir) {
       round: room.qCount,
       totalRounds: room.config.maxQuestions,
       remaining: Math.max(0, room.tracks.length - room.trackIdx),
-      trackMeta: { title: track.title, artist: track.artist }, // optional for client UI
+      trackMeta: { title: track.title, artist: track.artist },
     });
 
     if (q.media?.audioUrl) {
@@ -161,13 +154,12 @@ export function registerGameEngine(io, mediaDir) {
 
   function submitAnswer(room, socketId, answerIndex) {
     if (room.stage !== "question" || !room.q) return;
-    if (Date.now() >= room.deadline) return; // time's up
+    if (Date.now() >= room.deadline) return;
 
     const player = room.players.get(socketId);
     if (!player) return;
     const key = player.name.toLowerCase();
 
-    // Prevent double-answers across disconnects
     if (room.answersByName.has(key)) return;
 
     const choice = Number(answerIndex);
@@ -176,11 +168,9 @@ export function registerGameEngine(io, mediaDir) {
       room.perOptionCounts[choice]++;
     }
 
-    // live progress
     const { answered, total } = progressCounts(room);
     io.to(room.code).emit("progress:update", { answered, total });
 
-    // Early reveal if everyone answered
     if (answered >= total) {
       clearInterval(room.timers.tick);
       reveal(room);
@@ -294,9 +284,9 @@ export function registerGameEngine(io, mediaDir) {
     room.resultUntil = null;
     room.qCount = 0;
 
-    // new game = new whitelist + empty reclaim list
     room.whitelistNames = null;
     room.reclaimByName = new Map();
+    room.emoteCooldownByName = new Map(); // keep emote cooldowns clean between runs
 
     // re-seed tracks for the next run
     seedTracks(room);
@@ -311,7 +301,6 @@ export function registerGameEngine(io, mediaDir) {
     const list = room.config.randomizeOnStart ? shuffle(base) : base;
     room.tracks = list;
     room.trackIdx = 0;
-    // Default: play up to tracks.length or overridden by config
     room.config.maxQuestions = Math.min(room.config.maxQuestions || list.length, list.length);
   }
 
@@ -354,9 +343,10 @@ export function registerGameEngine(io, mediaDir) {
           // counters
           qCount: 0,
           manualLock: false,
+          // emotes
+          emoteCooldownByName: new Map(),
         };
 
-        // initialize playlist
         seedTracks(room);
 
         rooms.set(code, room);
@@ -625,6 +615,61 @@ export function registerGameEngine(io, mediaDir) {
       }
     });
 
+    /** ------------------ EMOTES (kept from your old index.js) ------------------ */
+    socket.on("emote:send", ({ code, image }, cb = () => {}) => {
+      try {
+        const room = rooms.get((code || socket.data.code || "").toUpperCase());
+        if (!room) {
+          console.warn("emote:send NO_SUCH_ROOM", code);
+          return cb({ ok: false, error: "NO_SUCH_ROOM" });
+        }
+
+        const player = room.players.get(socket.id);
+        const isHost = socket.id === room.hostId;
+        if (!player && !isHost) {
+          console.warn("emote:send NOT_IN_ROOM", { socket: socket.id, room: room.code });
+          return cb({ ok: false, error: "NOT_IN_ROOM" });
+        }
+
+        if (typeof image !== "string" || !image.startsWith("data:image/png;base64,")) {
+          console.warn("emote:send BAD_IMAGE");
+          return cb({ ok: false, error: "BAD_IMAGE" });
+        }
+        if (image.length > 250_000) {
+          console.warn("emote:send IMAGE_TOO_LARGE", image.length);
+          return cb({ ok: false, error: "IMAGE_TOO_LARGE" });
+        }
+
+        if (!room.emoteCooldownByName) room.emoteCooldownByName = new Map();
+        const displayName = player?.name ?? "Host";
+        const key = displayName.toLowerCase();
+
+        const now = Date.now();
+        const last = room.emoteCooldownByName.get(key) || 0;
+        const COOLDOWN_MS = 5000;
+        if (now - last < COOLDOWN_MS) {
+          const wait = Math.ceil((COOLDOWN_MS - (now - last)) / 1000);
+          console.warn("emote:send COOLDOWN", { name: displayName, wait });
+          return cb({ ok: false, error: "COOLDOWN", wait });
+        }
+        room.emoteCooldownByName.set(key, now);
+
+        const payload = {
+          id: `${now}-${socket.id}`,
+          name: displayName,
+          image,
+          at: now,
+        };
+
+        io.to(room.code).emit("emote:new", payload);
+        console.log("emote:send -> emote:new", { room: room.code, from: displayName, size: image.length });
+        cb({ ok: true });
+      } catch (err) {
+        console.error("emote:send error", err);
+        cb({ ok: false, error: "SERVER_ERROR" });
+      }
+    });
+
     /** Disconnect handling */
     socket.on("disconnect", () => {
       const code = socket.data.code;
@@ -650,9 +695,7 @@ export function registerGameEngine(io, mediaDir) {
         room.players.delete(socket.id);
 
         if (wasFirst) {
-          room.firstPlayerId = room.players.size
-            ? roomPlayersArray(room)[0].id
-            : null;
+          room.firstPlayerId = room.players.size ? roomPlayersArray(room)[0].id : null;
         }
 
         if (room.stage === "question" && room.q) {
