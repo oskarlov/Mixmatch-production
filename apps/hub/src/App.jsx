@@ -1,3 +1,5 @@
+import { BrowserRouter, Routes, Route } from "react-router-dom"; // Gjorde om App.jsx till en router
+import SpotifyCallback from "./SpotifyCallback"; // Hantera redirectToAuth problem
 import { useEffect, useRef, useState, useCallback } from "react";
 import {redirectToAuth, requestToken, hasSpotifyToken} from "../../server/engine/spotifyAuth.js";
 // If you published the shared package with this name (recommended):
@@ -8,7 +10,7 @@ import LobbySettings from "./components/LobbySettings";
 
 const useGame = useGameStore;
 
-export default function Hub() {
+function Hub() {
   const {
     code, players, hostId, stage, question, seconds, media,
     progress = { answered: 0, total: 0 },
@@ -33,6 +35,8 @@ export default function Hub() {
     tryPlay();
   }, [media]);
 
+  // Förflyttad till SpotifyCallback.jsx
+  /* 
   useEffect(() => {
     (async () => {
       try {
@@ -48,7 +52,7 @@ export default function Hub() {
       }
     })();
   }, [createRoom]);
-
+  */
   const onCreate = useCallback(() => {
     console.log("[onCreate] hasSpotifyToken?", hasSpotifyToken());
     if (!hasSpotifyToken()) {
@@ -348,5 +352,16 @@ function PlayerGrid({ players, hostId }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Hub />} />
+        <Route path="/callback" element={<SpotifyCallback />} />
+      </Routes>
+    </BrowserRouter>
   );
 }

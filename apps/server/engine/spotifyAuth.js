@@ -1,6 +1,7 @@
 import { ID } from "../../../packages/shared/apiConfig.js"; // "../apiConfig.js";
 
-const redirectUri = window.location.origin; // "https://halting-unsheltering-christa.ngrok-free.dev"; // Updatera efter deployment
+const redirectUri = `${window.location.origin}/callback`;
+// tidigare länkar window.location.origin; // "https://halting-unsheltering-christa.ngrok-free.dev"; // Updatera efter deployment
 
 // Redirect to Spotify (PKCE)
 // Code from https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow
