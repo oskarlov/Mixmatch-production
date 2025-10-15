@@ -1,0 +1,17 @@
+# Keep context tiny & avoid Windows file-lock issues
+**/node_modules
+**/.pnpm-store
+**/dist
+**/build
+**/.next
+**/.cache
+**/.vite
+**/coverage
+
+.git
+.gitignore
+*.log
+.env
+.env.*
+
+# DO NOT ignore pnpm-lock.yaml or package.json files

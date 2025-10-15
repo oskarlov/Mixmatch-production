@@ -1,0 +1,3 @@
+const ID = "98054721c122411d8880c1170d78b1b6"
+const SECRET = "bf1af49cc8d4449d9dc8ff32ec8f58f0"
+export {ID, SECRET}
