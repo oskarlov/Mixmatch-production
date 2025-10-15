@@ -16,7 +16,8 @@ const io = new Server(server, {
   cors: { origin: true, methods: ["GET", "POST"] },
 });
 
-// optional healthcheck
+// quiet the 404 on /
+app.get("/", (_req, res) => res.type("text").send("MixMatch server is running. Try /health or /socket.io"));
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 // Serve demo media from /media (drop an MP3 here)
@@ -31,20 +32,12 @@ app.use("/media", express.static(MEDIA_DIR));
  *   code, hostId, stage: "lobby"|"question"|"reveal"|"result"|"gameover",
  *   players: Map<socketId, { id, name, score }>,
  *   firstPlayerId: string|null,
- *   reclaimByName: Map<lowerName, { name, score }>, // disconnected players
- *   whitelistNames: Set<lowerName>|null,             // frozen at game start
+ *   reclaimByName: Map<lowerName, { name, score }>,
+ *   whitelistNames: Set<lowerName>|null,
  *   config: { maxQuestions: number, defaultDurationMs: number },
- *   // round state:
- *   q,
- *   answersByName: Map<lowerName, number>,
- *   perOptionCounts: number[],
- *   deadline: number|null,
- *   revealUntil: number|null,
- *   resultUntil: number|null,
- *   timers: { tick, reveal, result },
- *   _poolIdx, qCount, manualLock,
- *   // emotes:
- *   emoteCooldownByName: Map<lowerName, number>, // last sent timestamp per player name
+ *   q, answersByName, perOptionCounts, deadline, revealUntil, resultUntil,
+ *   timers: { tick, reveal, result }, _poolIdx, qCount, manualLock,
+ *   emoteCooldownByName: Map<lowerName, number>,
  * }
  */
 const rooms = new Map();
@@ -122,7 +115,6 @@ function stopAllAndClose(room) {
   rooms.delete(room.code);
 }
 function progressCounts(room) {
-  // count how many CONNECTED players' names are in answersByName
   const connected = new Set(Array.from(room.players.values()).map((p) => p.name.toLowerCase()));
   let answered = 0;
   for (const key of room.answersByName.keys()) {
@@ -145,7 +137,6 @@ function startQuestion(room) {
   room.perOptionCounts = Array(q.options.length).fill(0);
 
   const durationMs = room.config.defaultDurationMs ?? 20000;
-
   room.deadline = Date.now() + durationMs;
   room.revealUntil = null;
   room.resultUntil = null;
@@ -179,14 +170,13 @@ function startQuestion(room) {
     }
   }, 1000);
 }
-
 function emitTick(room) {
   const seconds = Math.max(0, Math.ceil((room.deadline - Date.now()) / 1000));
   io.to(room.code).emit("question:tick", { seconds });
 }
 function submitAnswer(room, socketId, answerIndex) {
   if (room.stage !== "question" || !room.q) return;
-  if (Date.now() >= room.deadline) return; // time's up
+  if (Date.now() >= room.deadline) return;
 
   const player = room.players.get(socketId);
   if (!player) return;
@@ -223,7 +213,6 @@ function reveal(room) {
 }
 function result(room) {
   if (!room.q) return;
-
   room.stage = "result";
 
   const correct = room.q.correctIndex ?? 0;
@@ -253,15 +242,11 @@ function result(room) {
 function gameEnd(room) {
   clearTimers(room);
   room.stage = "gameover";
-
   const leaderboard = [...room.players.values()]
     .sort((a, b) => (b.score || 0) - (a.score || 0))
     .map((p) => ({ id: p.id, name: p.name, score: p.score || 0 }));
-
   io.to(room.code).emit("game:end", { leaderboard });
 }
-
-/** Allow skipping timers by host or first player (not during question) */
 function canControl(socket, room) {
   return socket.id === room.hostId || socket.id === room.firstPlayerId;
 }
@@ -275,8 +260,6 @@ function advance(room) {
     else startQuestion(room);
   }
 }
-
-/** Reset scores & start again */
 function playAgain(room) {
   clearTimers(room);
   for (const p of room.players.values()) p.score = 0;
@@ -285,20 +268,15 @@ function playAgain(room) {
   emitRoomUpdate(room.code);
   startQuestion(room);
 }
-
-/** Back to lobby */
 function toLobby(room) {
   clearTimers(room);
 
   room.stage = "lobby";
-
-  // reset scores
   for (const p of room.players.values()) p.score = 0;
 
-  // fully clear round state
   room.q = null;
   room.answersByName = new Map();
-  room.answers = new Map(); // legacy slot if used elsewhere
+  room.answers = new Map();
   room.perOptionCounts = [];
   room.deadline = null;
   room.revealUntil = null;
@@ -306,11 +284,8 @@ function toLobby(room) {
   room._poolIdx = -1;
   room.qCount = 0;
 
-  // new game = new whitelist + empty reclaim list
   room.whitelistNames = null;
   room.reclaimByName = new Map();
-
-  // clear emote cooldowns when returning to lobby
   room.emoteCooldownByName = new Map();
 
   emitRoomUpdate(room.code);
@@ -319,6 +294,9 @@ function toLobby(room) {
 
 /** ------------------ socket logic ------------------ */
 io.on("connection", (socket) => {
+  console.log("[WS] connected", socket.id);
+  socket.onAny((event) => console.log("[WS IN]", event));
+
   socket.data.role = null; // "host" | "player"
   socket.data.code = null;
 
@@ -337,7 +315,7 @@ io.on("connection", (socket) => {
         players: new Map(),
         firstPlayerId: null,
         reclaimByName: new Map(),
-        whitelistNames: null, // set at game start
+        whitelistNames: null,
         config: {
           maxQuestions: demoPool().length,
           defaultDurationMs: 20000,
@@ -352,7 +330,6 @@ io.on("connection", (socket) => {
         _poolIdx: -1,
         qCount: 0,
         manualLock: false,
-        // emotes anti-spam
         emoteCooldownByName: new Map(),
       };
 
@@ -386,7 +363,6 @@ io.on("connection", (socket) => {
       let isReclaim = false;
 
       if (joiningDuringGame) {
-        // hard lock: only names captured at game start may rejoin, and only if we have a saved claim
         if (!room.whitelistNames?.has(key)) {
           return cb?.({ ok: false, error: "ROOM_LOCKED" });
         }
@@ -400,7 +376,6 @@ io.on("connection", (socket) => {
           return cb?.({ ok: false, error: "ROOM_LOCKED" });
         }
       } else {
-        // Lobby: normal join (or reclaim if they just disconnected in lobby)
         if (room.reclaimByName.has(key) && !connectedNames.has(key)) {
           const saved = room.reclaimByName.get(key);
           finalName = saved.name;
@@ -419,7 +394,7 @@ io.on("connection", (socket) => {
       const player = { id: socket.id, name: finalName, score: startScore };
       room.players.set(socket.id, player);
 
-      if (!room.firstPlayerId) room.firstPlayerId = socket.id; // first joiner gets control
+      if (!room.firstPlayerId) room.firstPlayerId = socket.id;
 
       // Stage sync to this socket only
       if (room.stage === "question" && room.q) {
@@ -484,7 +459,7 @@ io.on("connection", (socket) => {
     }
   });
 
-  /** Backwards compat: startRound actually starts the game */
+  /** Backwards compat */
   socket.on("game:startRound", ({ code }, cb) => {
     try {
       const room = rooms.get((code || socket.data.code || "").toUpperCase());
@@ -612,55 +587,58 @@ io.on("connection", (socket) => {
   });
 
   /** ------------------ EMOTES ------------------ */
-  // Player sends a small base64 PNG emote; broadcast to room with 5s cooldown per player name.
-  socket.on("emote:send", ({ code, image }, cb) => {
+  // Player or Host sends a small base64 PNG emote; 5s cooldown per display name; ALWAYS acks.
+  socket.on("emote:send", ({ code, image }, cb = () => {}) => {
     try {
       const room = rooms.get((code || socket.data.code || "").toUpperCase());
-      if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
+      if (!room) {
+        console.warn("emote:send NO_SUCH_ROOM", code);
+        return cb({ ok: false, error: "NO_SUCH_ROOM" });
+      }
 
       const player = room.players.get(socket.id);
-      if (!player) return cb?.({ ok: false, error: "NOT_IN_ROOM" });
-
-      // Basic validation: expect a small data URL PNG
-      if (typeof image !== "string" || !image.startsWith("data:image/png;base64,")) {
-        return cb?.({ ok: false, error: "BAD_IMAGE" });
+      const isHost = socket.id === room.hostId;
+      if (!player && !isHost) {
+        console.warn("emote:send NOT_IN_ROOM", { socket: socket.id, room: room.code });
+        return cb({ ok: false, error: "NOT_IN_ROOM" });
       }
-      // Rough size guard: limit to ~250KB dataURL string length
+
+      if (typeof image !== "string" || !image.startsWith("data:image/png;base64,")) {
+        console.warn("emote:send BAD_IMAGE");
+        return cb({ ok: false, error: "BAD_IMAGE" });
+      }
       if (image.length > 250_000) {
-        return cb?.({ ok: false, error: "IMAGE_TOO_LARGE" });
+        console.warn("emote:send IMAGE_TOO_LARGE", image.length);
+        return cb({ ok: false, error: "IMAGE_TOO_LARGE" });
       }
 
       if (!room.emoteCooldownByName) room.emoteCooldownByName = new Map();
+      const displayName = player?.name ?? "Host";
+      const key = displayName.toLowerCase();
 
-      const key = player.name.toLowerCase();
       const now = Date.now();
       const last = room.emoteCooldownByName.get(key) || 0;
       const COOLDOWN_MS = 5000;
-
       if (now - last < COOLDOWN_MS) {
         const wait = Math.ceil((COOLDOWN_MS - (now - last)) / 1000);
-        return cb?.({ ok: false, error: "COOLDOWN", wait });
+        console.warn("emote:send COOLDOWN", { name: displayName, wait });
+        return cb({ ok: false, error: "COOLDOWN", wait });
       }
-
       room.emoteCooldownByName.set(key, now);
 
       const payload = {
         id: `${now}-${socket.id}`,
-        name: player.name,
+        name: displayName,
         image,
         at: now,
       };
 
       io.to(room.code).emit("emote:new", payload);
-      console.log("emote:send -> emote:new", {
-        room: room.code,
-        from: player.name,
-        size: image.length,
-      });
-      cb?.({ ok: true });
+      console.log("emote:send -> emote:new", { room: room.code, from: displayName, size: image.length });
+      cb({ ok: true });
     } catch (err) {
       console.error("emote:send error", err);
-      cb?.({ ok: false, error: "SERVER_ERROR" });
+      cb({ ok: false, error: "SERVER_ERROR" });
     }
   });
 
@@ -673,10 +651,8 @@ io.on("connection", (socket) => {
     if (!room) return;
 
     if (socket.id === room.hostId) {
-      // Host left: close the room
       stopAllAndClose(room);
     } else {
-      // Save for reclaim (only matters after start; harmless in lobby)
       const leaving = room.players.get(socket.id);
       if (leaving) {
         room.reclaimByName.set(leaving.name.toLowerCase(), {
@@ -685,16 +661,12 @@ io.on("connection", (socket) => {
         });
       }
 
-      // Remove player
       const wasFirst = socket.id === room.firstPlayerId;
       room.players.delete(socket.id);
-
-      // Re-assign firstPlayerId if needed
       if (wasFirst) {
         room.firstPlayerId = room.players.size ? roomPlayersArray(room)[0].id : null;
       }
 
-      // If in-question and everyone remaining answered → reveal now
       if (room.stage === "question" && room.q) {
         const { answered, total } = progressCounts(room);
         if (answered >= total) {

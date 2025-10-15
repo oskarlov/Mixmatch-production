@@ -19,6 +19,15 @@ export default function Player() {
   const [room, setRoom] = useState("");
   const [name, setName] = useState("");
   const [joining, setJoining] = useState(false);
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const prefCode = params.get("code");
+      const prefName = params.get("name");
+      if (prefCode) setRoom(prefCode.toUpperCase());
+      if (prefName) setName(prefName);
+    } catch {}
+  }, []);
   const [emoteOpen, setEmoteOpen] = useState(false);
 
   // Fallback: if firstPlayerId not set yet, treat the first listed player as first

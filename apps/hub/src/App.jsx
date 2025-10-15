@@ -380,12 +380,71 @@ function StageCenter({ children }) {
 }
 
 function Landing({ onCreate }) {
+  // Where to send players
+  const playerUrl =
+    (import.meta && import.meta.env && import.meta.env.VITE_PLAYER_URL) ||
+    `${window.location.origin.replace(/\/$/, "")}/player`;
+
+  const goToPlayer = () => window.open(playerUrl, "_self");
+
+  const [copied, setCopied] = useState(false);
+  const copyJoinLink = async () => {
+    try {
+      await navigator.clipboard.writeText(playerUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {}
+  };
+
   return (
-    <div className="min-h-dvh grid place-items-center bg-ink-950 text-mist-100 p-6">
-      <PrimaryButton onClick={onCreate}>Create room</PrimaryButton>
-    </div>
+    <TheaterBackground bgUrl={THEATRE_BG}>
+      <div className="relative z-10 min-h-dvh text-mist-100 px-4 sm:px-6 lg:px-8 py-10">
+        <div className="mx-auto max-w-[900px] space-y-8">
+          {/* Header */}
+          <header className="flex items-center justify-between gap-4">
+            <h1 className="text-3xl md:text-4xl tracking-wide font-semibold font-display">
+              MixMatch
+            </h1>
+          </header>
+
+          {/* Description */}
+          <section className="grid gap-2">
+            <p className="text-mist-300 max-w-prose text-balance">
+              Host a music quiz. Friends join from their phones or desktop via the player.
+            </p>
+          </section>
+
+          {/* Join first */}
+          <section className="w-full max-w-sm mx-auto grid gap-2">
+            <SecondaryButton
+              onClick={goToPlayer}
+              aria-label="Go to player to join a room"
+              className="w-full text-lg px-5 py-3"
+            >
+              Join room
+            </SecondaryButton>
+          
+          </section>
+
+          {/* Then create */}
+          <section className="w-full max-w-sm mx-auto">
+            <div className="text-xs uppercase tracking-wide text-mist-400 mt-8 mb-2">
+              Or host a new game
+            </div>
+            <PrimaryButton
+              onClick={onCreate}
+              aria-label="Create a new room"
+              className="w-full text-lg px-5 py-3"
+            >
+              Create room
+            </PrimaryButton>
+          </section>
+        </div>
+      </div>
+    </TheaterBackground>
   );
 }
+
 
 function StageBadge({ stage, seconds, label = "Time left" }) {
   return (
