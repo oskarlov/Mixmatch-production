@@ -602,11 +602,14 @@ export function registerGameEngine(io, mediaDir) {
         const maxQuestions = clamp(payload?.maxQuestions, 1, HARDCODED_TRACKS.length, room.config.maxQuestions);
         const defaultDurationMs = clamp(payload?.durationMs, 5000, 120000, room.config.defaultDurationMs);
         const randomizeOnStart = Boolean(payload?.randomizeOnStart ?? room.config.randomizeOnStart);
+        const selectedPlaylistIDs = Array.isArray(payload?.selectedPlaylistIDs)
+          ? Array.from(new Set(payload.selectedPlaylistIDs.filter((x) => typeof x === "string")))          : (room.config.selectedPlaylistIDs || []);
 
         room.config.maxQuestions = maxQuestions;
         room.config.defaultDurationMs = defaultDurationMs;
         room.config.randomizeOnStart = randomizeOnStart;
-
+        room.config.selectedPlaylistIDs = selectedPlaylistIDs;
+        
         emitRoomUpdate(room.code);
         cb?.({ ok: true, config: room.config });
       } catch (err) {

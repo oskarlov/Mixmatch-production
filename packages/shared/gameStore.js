@@ -25,7 +25,7 @@ export const makeGameStore = (serverUrl) => {
       joinError: null,         // e.g., ROOM_LOCKED, NO_SUCH_ROOM
 
       // -------- Simple Game Settings (from server) --------
-      config: { maxQuestions: 10, defaultDurationMs: 20000 },
+      config: { maxQuestions: 10, defaultDurationMs: 20000, selectedPlaylistIDs: [] },
     };
 
     const secondsFrom = (ts, fallback = 0) =>
