@@ -153,7 +153,7 @@ export const makeGameStore = (serverUrl) => {
 
       setTrackList: (newLstTracks) => {set({ lstTracks: newLstTracks });},
       // host OR first player can start the game
-      startGame: () => s.emit("game:startGame", { code: get().code }),
+      startGame: () => s.emit("game:startGame", { code: get().code, lstTracks: get().lstTracks }),
       // backward-compat alias
       startRound: () => s.emit("game:startGame", { code: get().code }),
 
