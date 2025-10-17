@@ -151,6 +151,9 @@ export const makeGameStore = (serverUrl) => {
         });
       },
 
+      // gives current config
+      getConfig: () => get().config,
+      // updates tracklist
       setTrackList: (newLstTracks) => {set({ lstTracks: newLstTracks });},
       // host OR first player can start the game
       startGame: () => s.emit("game:startGame", { code: get().code }),

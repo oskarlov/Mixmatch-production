@@ -22,11 +22,11 @@ const MIN_H_FOR_CURTAINS = 650;
 
 function Hub() {
   const {
-    code, players, hostId, stage, question, seconds, media, lstTracks,
+    code, players, hostId, stage, question, seconds, media, config,
     progress = { answered: 0, total: 0 },
     perOptionCounts = [],
     leaderboard = [],
-    createRoom, setTrackList, startGame, nextQuestion, playAgain, toLobby,
+    createRoom, getConfig, setTrackList, startGame, nextQuestion, playAgain, toLobby,
   } = useGame();
 
   /* ---------------- Hub audio (host-only media) ---------------- */
@@ -52,9 +52,13 @@ function Hub() {
     }
     createRoom();
   }, [createRoom]);
-
+  
+  // Fetch and create track list and then starts game
   const onStart = useCallback(async () => {
-    const tracks = await makeTrackList("7eMpggGjI2UdYxmqMgWzfw", 10);
+    const currentConfig = getConfig();
+    const selectedID = currentConfig.selectedPlaylistIDs[0];
+    const numTracks = currentConfig.maxQuestions;
+    const tracks = await makeTrackList("7eMpggGjI2UdYxmqMgWzfw", numTracks);
     setTrackList(tracks);
     startGame();
   }, [setTrackList, startGame]);

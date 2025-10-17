@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useGameStore } from "../store";
 
 // Use your working path or alias here:
-import dictPlaylistID from "../../../../packages/shared/tempPlayListIDs.js";
+import dictPlaylistID from "../../../../packages/shared/PlayListIDs.js";
 
 /** ----- Genres (explicit allow-list; K-pop, Christmas, LOL omitted) ----- */
 const GENRE_LABELS = {

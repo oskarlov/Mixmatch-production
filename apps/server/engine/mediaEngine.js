@@ -1,7 +1,7 @@
 import { getPlaylistData, getAccessToken } from "./spotifyAuth.js";
 
 
-export async function makeTrackList(playlistID, n=10) {
+export async function makeTrackList(playlistID, n) {
     // Updatera för all info som behövs och utan "id: 'tx'"
     function saveCorrectInfoCB(trackObject, i) {
         return {
