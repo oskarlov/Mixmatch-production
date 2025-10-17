@@ -1,32 +1,32 @@
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { requestToken } from "../../server/engine/spotifyAuth.js";
-import { useGameStore } from "./store";
 
 export default function SpotifyCallback() {
-  const createRoom = useGameStore(s => s.createRoom);
   const navigate = useNavigate();
-  const ran = useRef(false); // avoid React 18 StrictMode double-run in dev
+  const ranRef = useRef(false);
 
   useEffect(() => {
-    if (ran.current) return;
-    ran.current = true;
+    if (ranRef.current) return;      // guard: React 18 StrictMode double-mount
+    ranRef.current = true;
+
+    const url = new URL(window.location.href);
+    const code = url.searchParams.get("code");
+    const state = url.searchParams.get("state");
+
+    // Remove the params immediately so a second pass can't reuse the code
+    window.history.replaceState({}, document.title, url.pathname);
 
     (async () => {
       try {
-        const data = await requestToken(); // exchanges ?code → tokens
-        const pending = localStorage.getItem("pending_action");
-        if (data && pending === "createRoom") {
-          localStorage.removeItem("pending_action");
-          await createRoom(); // server will push room:update → stage "lobby"
-        }
+        await requestToken(code, state); // pass values explicitly
       } catch (e) {
-        console.error("Spotify token exchange failed:", e);
+        console.error("Spotify token error:", e);
       } finally {
-        navigate("/", { replace: true }); // leave /callback quickly
+        navigate("/", { replace: true });
       }
     })();
-  }, [createRoom, navigate]);
+  }, [navigate]);
 
-  return <div className="min-h-dvh grid place-items-center">Completing Spotify sign-in…</div>;
+  return <div className="p-6 text-mist-100">Completing Spotify sign-in…</div>;
 }

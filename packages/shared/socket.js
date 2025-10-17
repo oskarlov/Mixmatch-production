@@ -11,17 +11,16 @@ export function getSocket(url) {
   }
   if (s) return s;
 
-  const resolvedUrl =
-    url ||
-    (typeof import.meta !== "undefined" &&
-      import.meta.env &&
-      import.meta.env.VITE_SERVER_URL) ||
-    (typeof process !== "undefined" &&
-      process.env &&
-      process.env.VITE_SERVER_URL) ||
-    "http://localhost:8080";
+  // Same-origin by default (so Vite proxy kicks in).
+  // If a URL is provided (e.g., from the Player in another setup), use it.
+  const opts = {
+    path: "/socket.io",
+    transports: ["websocket", "polling"], // allow polling fallback behind proxies
+    withCredentials: true,
+    autoConnect: true,
+  };
 
-  s = io(resolvedUrl, { transports: ["websocket"], autoConnect: true });
+  s = url ? io(url, opts) : io(opts); // <-- no hardcoded localhost
 
   if (typeof window !== "undefined") {
     window.__MIXMATCH_SOCKET__ = s;
