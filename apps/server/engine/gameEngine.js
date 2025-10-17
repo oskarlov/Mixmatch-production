@@ -1,7 +1,7 @@
 // Game engine that runs a quiz over a list of tracks, one per round.
 import crypto from "node:crypto";
 import { generateQuestion } from "./questionEngine.js"; // question/gemini plumbing
-import { generateTrackRecognitionQuestion } from "./questionEngine.js";
+import { createTrackRecognitionQuestion } from "./questionEngine.js";
 
 export function registerGameEngine(io, mediaDir) {
   const rooms = new Map();
@@ -111,7 +111,7 @@ export function registerGameEngine(io, mediaDir) {
         const useTrackRecognition = track.previewUrl ? coinFlip() : false;
         if (useTrackRecognition) {
           // build the free-text question that plays the current track
-          q = generateTrackRecognitionQuestion(track);
+          q = createTrackRecognitionQuestion(track);
         } else {
           //multiple-choice question (Gemini)
           q = await generateQuestion(track);
@@ -221,8 +221,8 @@ export function registerGameEngine(io, mediaDir) {
     room.revealUntil = Date.now() + 15000;
 
     io.to(room.code).emit("question:reveal", {
-      correctIndex: room.q.correctIndex ?? 0,
-      perOptionCounts: room.perOptionCounts || [],
+      correctIndex: room.q.type === "multiple-choice" ? (room.q.correctIndex ?? 0) : null,
+      perOptionCounts: room.q.type === "multiple-choice" ? (room.perOptionCounts || []) : [],
       revealUntil: room.revealUntil,
     });
 
@@ -238,6 +238,25 @@ export function registerGameEngine(io, mediaDir) {
     for (const p of room.players.values()) {
       const idx = room.answersByName.get(p.name.toLowerCase());
       if (idx === correct) p.score = (p.score || 0) + 1;
+    }
+
+    const track = room.tracks[Math.max(0, room.trackIdx - 1)];
+    if (room.q.type === "multiple-choice") {
+      const correct = room.q.correctIndex ?? 0;
+      for (const p of room.players.values()) {
+        const idx = room.answersByName.get(p.name.toLowerCase());
+        if (idx === correct) p.score = (p.score || 0) + 1;
+      }
+    } else {
+      const target = normalizeText(track?.title);
+      for (const p of room.players.values()) {
+        const typed = room.answersByName.get(p.name.toLowerCase());
+        if (!typed) continue;
+        const guess = normalizeText(typed);
+        if (guess && target && guess === target) {
+          p.score = (p.score || 0) + 1;
+          }
+      }
     }
 
     const leaderboard = [...room.players.values()]
@@ -547,13 +566,13 @@ export function registerGameEngine(io, mediaDir) {
     });
 
     /** Player submits an answer */
-    socket.on("answer:submit", ({ code, questionId, answerIndex }, cb) => {
+    socket.on("answer:submit", ({ code, questionId, answerIndex, text }, cb) => {
       try {
         const room = rooms.get(code || socket.data.code);
         if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
         if (!room.q || room.q.id !== questionId) return cb?.({ ok: false, error: "NO_ACTIVE_QUESTION" });
 
-        submitAnswer(room, socket.id, answerIndex);
+        submitAnswer(room, socket.id, answerIndex, text);
         cb?.({ ok: true });
       } catch (err) {
         console.error("answer:submit error", err);

@@ -181,14 +181,26 @@ export const makeGameStore = (serverUrl) => {
       // optional manual reveal trigger (host)
       reveal: () => s.emit("game:reveal", { code: get().code }),
 
-      // PLAYER: submit an answer (locks locally)
+      // PLAYER: submit MCQ answer (option index)
       submitAnswer: (answerIndex) => {
         const q = get().question;
-        if (!q) return;
+        if (!q || q.type !== "multiple-choice") return;
         s.emit("answer:submit", {
           code: get().code,
           questionId: q.id,
           answerIndex,
+        });
+        set({ stage: "locked" });
+      },
+    
+      // PLAYER: submit track-recognition answer (free text)
+      submitTextAnswer: (text) => {
+        const q = get().question;
+        if (!q || q.type !== "track-recognition") return;
+        s.emit("answer:submit", {
+          code: get().code,
+          questionId: q.id,
+          text, // <-- server will read this for track-recognition
         });
         set({ stage: "locked" });
       },
