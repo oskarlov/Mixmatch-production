@@ -129,6 +129,11 @@ export const makeGameStore = (serverUrl) => {
 
       // HOST: create a room
       createRoom: () => s.emit("host:createRoom"),
+      // in actions return {...}, add:
+      seedTracks: (tracks, cb) => {
+      const s = getSocket();
+      s.emit("game:seedTracks", { code: get().code, tracks }, (res) => cb?.(res));
+      },
 
       // PLAYER: join (no auto-rejoin, no storage; always manual)
       joinRoom: (code, name, cb) => {

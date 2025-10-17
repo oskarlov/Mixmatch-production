@@ -19,7 +19,6 @@ services:
               pnpm --filter ./apps/hub dev --host 0.0.0.0 --port 5173 --strictPort"
     environment:
       - CI=true
-      - VITE_SERVER_URL=http://localhost:8080
       - CHOKIDAR_USEPOLLING=1
       - WATCHPACK_POLLING=true
     ports:
