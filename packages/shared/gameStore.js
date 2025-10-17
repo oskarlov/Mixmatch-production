@@ -26,7 +26,7 @@ export const makeGameStore = (serverUrl) => {
       lstTracks: [],           // [{ id, title, artist }] Uppdatera för rätt parametrar
 
       // -------- Simple Game Settings (from server) --------
-      config: { maxQuestions: 10, defaultDurationMs: 20000 },
+      config: { maxQuestions: 10, defaultDurationMs: 20000, selectedPlaylistIDs: [] },
     };
 
     const secondsFrom = (ts, fallback = 0) =>

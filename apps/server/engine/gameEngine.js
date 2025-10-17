@@ -77,9 +77,17 @@ export function registerGameEngine(io, mediaDir) {
     return a;
   }
 
+  function ensureTracksSeeded(room) {
+  if (!room.tracks || room.tracks.length === 0) {
+    seedTracks(room);
+    room.tracksSeeded = true; // optional flag if you want to know it happened
+    }
+  }
+
   /** ------------------ round engine ------------------ */
   async function startQuestion(room) {
     clearTimers(room);
+    ensureTracksSeeded(room);
     if (room.qCount >= room.config.maxQuestions) return gameEnd(room);
     if (room.trackIdx >= room.tracks.length) return gameEnd(room);
 
@@ -256,12 +264,11 @@ export function registerGameEngine(io, mediaDir) {
     clearTimers(room);
 
     for (const p of room.players.values()) p.score = 0;
-
     // reset round pointers
     room.qCount = 0;
+    room.trackIdx =0;
+    room.tracks = []
     room.stage = "lobby";
-    // re-seed tracks (respect config.randomizeOnStart)
-    seedTracks(room);
 
     emitRoomUpdate(room.code);
     // start a new question immediately
@@ -283,13 +290,12 @@ export function registerGameEngine(io, mediaDir) {
     room.revealUntil = null;
     room.resultUntil = null;
     room.qCount = 0;
+    room.trackIdx =0;
+    room.tracks = []
 
     room.whitelistNames = null;
     room.reclaimByName = new Map();
     room.emoteCooldownByName = new Map(); // keep emote cooldowns clean between runs
-
-    // re-seed tracks for the next run
-    seedTracks(room);
 
     emitRoomUpdate(room.code);
     io.to(room.code).emit("game:lobby");
@@ -346,8 +352,6 @@ export function registerGameEngine(io, mediaDir) {
           // emotes
           emoteCooldownByName: new Map(),
         };
-
-        seedTracks(room);
 
         rooms.set(code, room);
         socket.join(code);
@@ -473,8 +477,7 @@ export function registerGameEngine(io, mediaDir) {
           Array.from(room.players.values()).map(p => p.name.toLowerCase())
         );
 
-        // re-seed and reset counters
-        seedTracks(room);
+        //reset counters
         room.qCount = 0;
 
         startQuestion(room);
@@ -499,7 +502,6 @@ export function registerGameEngine(io, mediaDir) {
           Array.from(room.players.values()).map(p => p.name.toLowerCase())
         );
 
-        seedTracks(room);
         room.qCount = 0;
 
         startQuestion(room);
@@ -602,11 +604,14 @@ export function registerGameEngine(io, mediaDir) {
         const maxQuestions = clamp(payload?.maxQuestions, 1, HARDCODED_TRACKS.length, room.config.maxQuestions);
         const defaultDurationMs = clamp(payload?.durationMs, 5000, 120000, room.config.defaultDurationMs);
         const randomizeOnStart = Boolean(payload?.randomizeOnStart ?? room.config.randomizeOnStart);
+        const selectedPlaylistIDs = Array.isArray(payload?.selectedPlaylistIDs)
+          ? Array.from(new Set(payload.selectedPlaylistIDs.filter((x) => typeof x === "string")))          : (room.config.selectedPlaylistIDs || []);
 
         room.config.maxQuestions = maxQuestions;
         room.config.defaultDurationMs = defaultDurationMs;
         room.config.randomizeOnStart = randomizeOnStart;
-
+        room.config.selectedPlaylistIDs = selectedPlaylistIDs;
+        
         emitRoomUpdate(room.code);
         cb?.({ ok: true, config: room.config });
       } catch (err) {
