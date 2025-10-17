@@ -1,3 +1,4 @@
+
 import { ID } from "../../../packages/shared/apiConfig.js"; // "../apiConfig.js";
 
 // const redirectUri = `${window.location.origin}/callback`;
@@ -172,4 +173,30 @@ export async function getPlaylistData(accessToken, playlistID) {
     }
 
     return data.items.map(i => i.track);
+}
+
+// ---- Device preference (added so your spotifyClient.js import stops erroring) ----
+const PREFERRED_DEVICE_KEY = "spotify_preferred_device_id";
+
+/* Returns the last chosen deviceId (or null if unset). */
+export function getPreferredDeviceId() {
+  try {
+    return localStorage.getItem(PREFERRED_DEVICE_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+/* Persist a preferred deviceId (pass null/undefined to clear). */
+export function setPreferredDeviceId(deviceId) {
+  try {
+    if (!deviceId) {
+      localStorage.removeItem(PREFERRED_DEVICE_KEY);
+      return null;
+    }
+    localStorage.setItem(PREFERRED_DEVICE_KEY, String(deviceId));
+    return deviceId;
+  } catch {
+    return null;
+  }
 }

@@ -5,8 +5,8 @@ import { generateQuestion } from "./questionEngine.js"; // question/gemini plumb
 export function registerGameEngine(io, mediaDir) {
   const rooms = new Map();
 
-  /** ------------------ Track source (hardcoded for now) ------------------ */
-  // Provide at least { id, title, artist, previewUrl? }.
+  /** ------------------ Track source (hardcoded fallback) ------------------ */
+  // Provide at least { id, title, artist, previewUrl?, uri? }.
   const HARDCODED_TRACKS = [
     { id: "t1",  title: "Billie Jean",                 artist: "Michael Jackson" },
     { id: "t2",  title: "Smells Like Teen Spirit",     artist: "Nirvana" },
@@ -134,10 +134,12 @@ export function registerGameEngine(io, mediaDir) {
       trackMeta: { title: track.title, artist: track.artist },
     });
 
-    if (q.media?.audioUrl) {
+    // Prefer sending Spotify URI to the Hub; fall back to preview audio if available.
+    if ((q.media?.audioUrl) || track.uri) {
       io.to(room.hostId).emit("question:hubMedia", {
         id: q.id,
-        audioUrl: q.media.audioUrl,
+        audioUrl: q.media?.audioUrl || null,
+        spotifyUri: track.uri || null,
         durationMs,
       });
     }
@@ -269,6 +271,8 @@ export function registerGameEngine(io, mediaDir) {
     room.trackIdx =0;
     room.tracks = []
     room.stage = "lobby";
+    // re-seed tracks (respect config.randomizeOnStart and spotifyTracks)
+    seedTracks(room);
 
     emitRoomUpdate(room.code);
     // start a new question immediately
@@ -301,14 +305,27 @@ export function registerGameEngine(io, mediaDir) {
     io.to(room.code).emit("game:lobby");
   }
 
-  /** Seed the room's tracks from the hardcoded list (later: Spotify) */
+  /**
+   * Seed the room's tracks from the host-provided Spotify list (if any),
+   * otherwise fall back to the hardcoded demo list.
+   */
   function seedTracks(room) {
-    const base = HARDCODED_TRACKS.slice(); // clone
-    const list = room.config.randomizeOnStart ? shuffle(base) : base;
-    room.tracks = list;
-    room.trackIdx = 0;
-    room.config.maxQuestions = Math.min(room.config.maxQuestions || list.length, list.length);
-  }
+  const source =
+    (Array.isArray(room.spotifyTracks) && room.spotifyTracks.length)
+      ? room.spotifyTracks
+      : (Array.isArray(room.lstTracks) && room.lstTracks.length) ? room.lstTracks : HARDCODED_TRACKS;
+       
+  const base = source.slice(); // clone
+  const list = room.config.randomizeOnStart ? shuffle(base) : base;
+
+  room.tracks = list;
+  room.trackIdx = 0;
+
+  // Clamp maxQuestions to what's actually available
+  const available = list.length;
+  const desired = Number(room.config.maxQuestions || available);
+  room.config.maxQuestions = Math.min(desired, available);
+}
 
   /** ------------------ socket logic ------------------ */
   io.on("connection", (socket) => {
@@ -331,8 +348,9 @@ export function registerGameEngine(io, mediaDir) {
           firstPlayerId: null,
           reclaimByName: new Map(),
           whitelistNames: null, // set at game start
+          lstTracks: [],
           config: {
-            maxQuestions: HARDCODED_TRACKS.length,   // default to tracklist length
+            maxQuestions: HARDCODED_TRACKS.length,   // default to tracklist length (will re-clamp on seed)
             defaultDurationMs: 20000,                // 20s per question
             randomizeOnStart: true,                  // shuffle track order at start
           },
@@ -346,6 +364,8 @@ export function registerGameEngine(io, mediaDir) {
           // track playlist state
           tracks: [],
           trackIdx: 0,
+          // NEW: host-provided Spotify tracks (normalized)
+          spotifyTracks: null,
           // counters
           qCount: 0,
           manualLock: false,
@@ -463,7 +483,7 @@ export function registerGameEngine(io, mediaDir) {
     });
 
     /** Start game (host OR first player) */
-    socket.on("game:startGame", ({ code }, cb) => {
+    socket.on("game:startGame", ({ code, lstTracks }, cb) => {
       try {
         const room = rooms.get(code || socket.data.code);
         if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
@@ -477,7 +497,11 @@ export function registerGameEngine(io, mediaDir) {
           Array.from(room.players.values()).map(p => p.name.toLowerCase())
         );
 
+        room.lstTracks = lstTracks;
+
         //reset counters
+        // re-seed and reset counters (seedTracks will prefer spotifyTracks if present)
+        seedTracks(room);
         room.qCount = 0;
 
         startQuestion(room);
@@ -589,7 +613,11 @@ export function registerGameEngine(io, mediaDir) {
       }
     });
 
-    /** Simple Game Settings (host-only, lobby-only) */
+    /**
+     * Simple Game Settings (host-only, lobby-only)
+     * Loosened maxQuestions upper bound (now up to 100);
+     * seedTracks() will clamp to the number of available tracks at start.
+     */
     socket.on("game:updateConfig", (payload, cb) => {
       try {
         const code = payload?.code || socket.data?.code;
@@ -601,21 +629,60 @@ export function registerGameEngine(io, mediaDir) {
         const clamp = (n, lo, hi, fallback) =>
           Number.isFinite(Number(n)) ? Math.max(lo, Math.min(hi, Number(n))) : fallback;
 
-        const maxQuestions = clamp(payload?.maxQuestions, 1, HARDCODED_TRACKS.length, room.config.maxQuestions);
+        // previously limited by HARDCODED_TRACKS.length (10). Allow up to 100.
+        const maxQuestions = clamp(payload?.maxQuestions, 1, 100, room.config.maxQuestions);
         const defaultDurationMs = clamp(payload?.durationMs, 5000, 120000, room.config.defaultDurationMs);
         const randomizeOnStart = Boolean(payload?.randomizeOnStart ?? room.config.randomizeOnStart);
         const selectedPlaylistIDs = Array.isArray(payload?.selectedPlaylistIDs)
-          ? Array.from(new Set(payload.selectedPlaylistIDs.filter((x) => typeof x === "string")))          : (room.config.selectedPlaylistIDs || []);
+          ? Array.from(new Set(payload.selectedPlaylistIDs.filter((x) => typeof x === "string")))
+          : (room.config.selectedPlaylistIDs || []);
 
         room.config.maxQuestions = maxQuestions;
         room.config.defaultDurationMs = defaultDurationMs;
         room.config.randomizeOnStart = randomizeOnStart;
         room.config.selectedPlaylistIDs = selectedPlaylistIDs;
-        
+
         emitRoomUpdate(room.code);
         cb?.({ ok: true, config: room.config });
       } catch (err) {
         console.error("game:updateConfig error", err);
+        cb?.({ ok: false, error: "SERVER_ERROR" });
+      }
+    });
+
+    /** ------------------ NEW: Host seeds Spotify tracks before starting ------------------ */
+    socket.on("game:seedTracks", ({ code, tracks }, cb) => {
+      try {
+        const room = rooms.get(code || socket.data.code);
+        if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
+        if (socket.id !== room.hostId) return cb?.({ ok: false, error: "NOT_HOST" });
+        if (room.stage !== "lobby") return cb?.({ ok: false, error: "ALREADY_STARTED" });
+
+        // Minimal normalization + validation; uri is optional but recommended for Spotify Connect
+        const norm = (Array.isArray(tracks) ? tracks : [])
+          .map(t => ({
+            id: String(t.id || ""),
+            title: String(t.title || t.name || ""),
+            artist: String(t.artist || ""),
+            previewUrl: t.previewUrl || null,
+            uri: t.uri ? String(t.uri) : null,
+          }))
+          .filter(t => t.title && t.artist);
+
+        // de-duplicate by track id
+        const seen = new Set();
+        const dedup = norm.filter(t => (t.id && !seen.has(t.id)) ? (seen.add(t.id), true) : false);
+
+        if (!dedup.length) return cb?.({ ok: false, error: "NO_VALID_TRACKS" });
+
+        room.spotifyTracks = dedup;
+        // re-seed immediately so the UI's "remaining" counter updates
+        seedTracks(room);
+        emitRoomUpdate(room.code);
+
+        cb?.({ ok: true, count: dedup.length });
+      } catch (err) {
+        console.error("game:seedTracks error", err);
         cb?.({ ok: false, error: "SERVER_ERROR" });
       }
     });

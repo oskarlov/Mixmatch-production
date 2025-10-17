@@ -129,6 +129,11 @@ export const makeGameStore = (serverUrl) => {
 
       // HOST: create a room
       createRoom: () => s.emit("host:createRoom"),
+      // in actions return {...}, add:
+      seedTracks: (tracks, cb) => {
+      const s = getSocket();
+      s.emit("game:seedTracks", { code: get().code, tracks }, (res) => cb?.(res));
+      },
 
       // PLAYER: join (no auto-rejoin, no storage; always manual)
       joinRoom: (code, name, cb) => {
@@ -156,7 +161,7 @@ export const makeGameStore = (serverUrl) => {
       // updates tracklist
       setTrackList: (newLstTracks) => {set({ lstTracks: newLstTracks });},
       // host OR first player can start the game
-      startGame: () => s.emit("game:startGame", { code: get().code }),
+      startGame: () => s.emit("game:startGame", { code: get().code, lstTracks: get().lstTracks }),
       // backward-compat alias
       startRound: () => s.emit("game:startGame", { code: get().code }),
 
