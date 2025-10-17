@@ -310,21 +310,22 @@ export function registerGameEngine(io, mediaDir) {
    * otherwise fall back to the hardcoded demo list.
    */
   function seedTracks(room) {
-    const clientProvided = Array.isArray(room.lstTracks) && room.lstTracks.length > 0;
-    const base = clientProvided ? room.lstTracks.slice() : HARDCODED_TRACKS.slice();
-    const source = Array.isArray(room.spotifyTracks) && room.spotifyTracks.length
+  const source =
+    (Array.isArray(room.spotifyTracks) && room.spotifyTracks.length)
       ? room.spotifyTracks
-      : HARDCODED_TRACKS;
+      : (Array.isArray(room.lstTracks) && room.lstTracks.length) ? room.lstTracks : HARDCODED_TRACKS;
+       
+  const base = source.slice(); // clone
+  const list = room.config.randomizeOnStart ? shuffle(base) : base;
 
-    const base = source.slice(); // clone
-    const list = room.config.randomizeOnStart ? shuffle(base) : base;
-    room.tracks = list;
-    room.trackIdx = 0;
-    // Clamp maxQuestions to what's actually available
-    const available = list.length;
-    const desired = Number(room.config.maxQuestions || available);
-    room.config.maxQuestions = Math.min(desired, available);
-  }
+  room.tracks = list;
+  room.trackIdx = 0;
+
+  // Clamp maxQuestions to what's actually available
+  const available = list.length;
+  const desired = Number(room.config.maxQuestions || available);
+  room.config.maxQuestions = Math.min(desired, available);
+}
 
   /** ------------------ socket logic ------------------ */
   io.on("connection", (socket) => {

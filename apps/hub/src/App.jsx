@@ -1,14 +1,10 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom"; // Router
 import SpotifyCallback from "./SpotifyCallback";                  // Handles token exchange
 import { useEffect, useRef, useState, useCallback } from "react";
-<<<<<<< HEAD
-import { redirectToAuth, hasSpotifyToken, } from "../../server/engine/spotifyAuth.js";
 import { makeTrackList } from "../../server/engine/mediaEngine";
-=======
 import { redirectToAuth, hasSpotifyToken } from "../../server/engine/spotifyAuth.js";
 import { collectTracksFromPlaylists, startPlayback } from "./spotify/spotifyClient.js"; // Spotify API helpers
 
->>>>>>> 930c019 (Spotify auth + Connect playback; public playlist seeding)
 // If you published the shared package with this name (recommended):
 // import { makeGameStore } from "@mixmatch/shared/gameStore";
 // Temporary relative imports (keep your own paths)
@@ -28,20 +24,12 @@ const MIN_H_FOR_CURTAINS = 650;
 
 function Hub() {
   const {
-<<<<<<< HEAD
-    code, players, hostId, stage, question, seconds, media, lstTracks,
-    progress = { answered: 0, total: 0 },
-    perOptionCounts = [],
-    leaderboard = [],
-    createRoom, setTrackList, startGame, nextQuestion, playAgain, toLobby,
-=======
-    code, players, hostId, stage, question, seconds, media, config,
+    code, players, hostId, stage, question, seconds, media, config, lstTracks,
     progress = { answered: 0, total: 0 },
     perOptionCounts = [],
     leaderboard = [],
     createRoom, startGame, nextQuestion, playAgain, toLobby,
-    seedTracks, // NEW (add this action in your store to emit game:seedTracks)
->>>>>>> 930c019 (Spotify auth + Connect playback; public playlist seeding)
+    seedTracks, setTrackList, // NEW (add this action in your store to emit game:seedTracks)
   } = useGame();
 
   /* ---------------- Hub audio (host-only media) ---------------- */
@@ -87,13 +75,11 @@ function Hub() {
     createRoom();
   }, [createRoom]);
 
-<<<<<<< HEAD
   const onStart = useCallback(async () => {
     const tracks = await makeTrackList("7eMpggGjI2UdYxmqMgWzfw", 10);
     setTrackList(tracks);
     startGame();
   }, [setTrackList, startGame]);
-=======
   // After /callback: if pending_action was "createRoom" and we now have token → create the room
   useEffect(() => {
     const pending = localStorage.getItem("pending_action");
@@ -119,7 +105,6 @@ function Hub() {
       startGame();
     }
   }, [config?.selectedPlaylistIDs, seedTracks, startGame]);
->>>>>>> 930c019 (Spotify auth + Connect playback; public playlist seeding)
 
   /* ---------------- Spotlight + Curtains orchestration ---------------- */
   const [spotlightActive, setSpotlightActive] = useState(false);
@@ -234,11 +219,7 @@ function Hub() {
               <div className="space-y-4 w-full">
                 <LobbySettings />
                 <PrimaryButton
-<<<<<<< HEAD
                   onClick={onStart}
-=======
-                  onClick={onStartGame}        
->>>>>>> 930c019 (Spotify auth + Connect playback; public playlist seeding)
                   disabled={!canStart}
                   aria-label="Start game"
                   className="w-full text-lg px-5 py-3"
