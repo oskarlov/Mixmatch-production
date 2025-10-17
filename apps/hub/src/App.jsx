@@ -1,7 +1,8 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom"; // Router
 import SpotifyCallback from "./SpotifyCallback";                  // Handles token exchange
 import { useEffect, useRef, useState, useCallback } from "react";
-import { redirectToAuth, hasSpotifyToken } from "../../server/engine/spotifyAuth.js";
+import { redirectToAuth, hasSpotifyToken, } from "../../server/engine/spotifyAuth.js";
+import { makeTrackList } from "../../server/engine/mediaEngine";
 // If you published the shared package with this name (recommended):
 // import { makeGameStore } from "@mixmatch/shared/gameStore";
 // Temporary relative imports (keep your own paths)
@@ -21,11 +22,11 @@ const MIN_H_FOR_CURTAINS = 650;
 
 function Hub() {
   const {
-    code, players, hostId, stage, question, seconds, media,
+    code, players, hostId, stage, question, seconds, media, lstTracks,
     progress = { answered: 0, total: 0 },
     perOptionCounts = [],
     leaderboard = [],
-    createRoom, startGame, nextQuestion, playAgain, toLobby,
+    createRoom, setTrackList, startGame, nextQuestion, playAgain, toLobby,
   } = useGame();
 
   /* ---------------- Hub audio (host-only media) ---------------- */
@@ -51,6 +52,12 @@ function Hub() {
     }
     createRoom();
   }, [createRoom]);
+
+  const onStart = useCallback(async () => {
+    const tracks = await makeTrackList("7eMpggGjI2UdYxmqMgWzfw", 10);
+    setTrackList(tracks);
+    startGame();
+  }, [setTrackList, startGame]);
 
   /* ---------------- Spotlight + Curtains orchestration ---------------- */
   const [spotlightActive, setSpotlightActive] = useState(false);
@@ -165,7 +172,7 @@ function Hub() {
               <div className="space-y-4 w-full">
                 <LobbySettings />
                 <PrimaryButton
-                  onClick={startGame}
+                  onClick={onStart}
                   disabled={!canStart}
                   aria-label="Start game"
                   className="w-full text-lg px-5 py-3"
