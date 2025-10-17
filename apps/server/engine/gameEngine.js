@@ -47,6 +47,19 @@ export function registerGameEngine(io, mediaDir) {
       remaining: Math.max(0, room.tracks.length - room.trackIdx),
     });
   }
+  function progressCounts(room){
+    const connected = Array.from(room.players.values());
+    const answeredIds = [];
+    let answered = 0;
+    for (const p of connected) {
+      const k = p.name.toLowerCase();
+      if (room.answersByName.has(k)) {
+        answeredIds.push(k.id);
+        answered++;
+      }
+    }
+    return { answered, total: connected.length, answeredIds };
+  }
   function clearTimers(room) {
     if (!room?.timers) return;
     const { tick, reveal, result } = room.timers;
@@ -170,8 +183,8 @@ export function registerGameEngine(io, mediaDir) {
       room.perOptionCounts[choice]++;
     }
 
-    const { answered, total } = progressCounts(room);
-    io.to(room.code).emit("progress:update", { answered, total });
+    const { answered, total, answeredIds} = progressCounts(room);
+    io.to(room.code).emit("progress:update", { answered, total, answeredIds });
 
     if (answered >= total) {
       clearInterval(room.timers.tick);

@@ -23,7 +23,7 @@ export const makeGameStore = (serverUrl) => {
       leaderboard: [],
       media: null,             // { audioUrl } (hub-only)
       joinError: null,         // e.g., ROOM_LOCKED, NO_SUCH_ROOM
-
+      answerIds: [],
       // -------- Simple Game Settings (from server) --------
       config: { maxQuestions: 10, defaultDurationMs: 20000, selectedPlaylistIDs: [] },
     };
@@ -75,6 +75,7 @@ export const makeGameStore = (serverUrl) => {
         perOptionCounts: [],
         leaderboard: [],
         progress: { answered: 0, total: get().players.length || 0 },
+        answerIds: [],
       });
     });
 
@@ -95,7 +96,7 @@ export const makeGameStore = (serverUrl) => {
 
     s.on("question:tick", ({ seconds }) => set({ seconds }));
     s.on("progress:update", ({ answered, total }) =>
-      set({ progress: { answered, total } })
+      set({ progress: { answered, total }, answeredIds })
     );
     s.on("question:hubMedia", (media) => set({ media }));
 
@@ -115,6 +116,7 @@ export const makeGameStore = (serverUrl) => {
         leaderboard,
         resultUntil: resultUntil ?? null,
         seconds: secondsFrom(resultUntil, st.seconds),
+        answerIds: [],
       }))
     );
 

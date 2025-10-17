@@ -3,6 +3,7 @@ import SpotifyCallback from "./SpotifyCallback";                  // Handles tok
 import { useEffect, useRef, useState, useCallback } from "react";
 import { redirectToAuth, hasSpotifyToken } from "../../server/engine/spotifyAuth.js";
 import { collectTracksFromPlaylists, startPlayback } from "./spotify/spotifyClient.js"; // Spotify API helpers
+import multiavatar from '@multiavatar/multiavatar/esm';
 
 // If you published the shared package with this name (recommended):
 // import { makeGameStore } from "@mixmatch/shared/gameStore";
@@ -13,6 +14,7 @@ import CurtainOverlay from "./components/CurtainOverlay.jsx";
 import { useGameStore } from "./store";
 import LobbySettings from "./components/LobbySettings.jsx";
 import EmoteStream from "./components/EmoteStream.jsx";
+import AvatarsFooter from "./Components/AvatarFooter.jsx";
 
 const THEATRE_BG = "/images/theatre-lobby.png";
 const useGame = useGameStore;
@@ -396,6 +398,7 @@ function Hub() {
     <div className="relative">
       {content}
       <EmoteStream />
+      <AvatarsFooter />
     </div>
   );
 }
