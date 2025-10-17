@@ -333,7 +333,8 @@ export function registerGameEngine(io, mediaDir) {
 
   /** Seed the room's tracks from the hardcoded list (later: Spotify) */
   function seedTracks(room) {
-    const base = HARDCODED_TRACKS.slice(); // clone
+    const clientProvided = Array.isArray(room.lstTracks) && room.lstTracks.length > 0;
+    const base = clientProvided ? room.lstTracks.slice() : HARDCODED_TRACKS.slice();
     const list = room.config.randomizeOnStart ? shuffle(base) : base;
     room.tracks = list;
     room.trackIdx = 0;
@@ -361,6 +362,7 @@ export function registerGameEngine(io, mediaDir) {
           firstPlayerId: null,
           reclaimByName: new Map(),
           whitelistNames: null, // set at game start
+          lstTracks: [],
           config: {
             maxQuestions: HARDCODED_TRACKS.length,   // default to tracklist length
             defaultDurationMs: 20000,                // 20s per question
@@ -493,7 +495,7 @@ export function registerGameEngine(io, mediaDir) {
     });
 
     /** Start game (host OR first player) */
-    socket.on("game:startGame", ({ code }, cb) => {
+    socket.on("game:startGame", ({ code, lstTracks }, cb) => {
       try {
         const room = rooms.get(code || socket.data.code);
         if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
@@ -506,6 +508,8 @@ export function registerGameEngine(io, mediaDir) {
         room.whitelistNames = new Set(
           Array.from(room.players.values()).map(p => p.name.toLowerCase())
         );
+
+        room.lstTracks = lstTracks;
 
         //reset counters
         room.qCount = 0;

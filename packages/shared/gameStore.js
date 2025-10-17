@@ -23,6 +23,7 @@ export const makeGameStore = (serverUrl) => {
       leaderboard: [],
       media: null,             // { audioUrl } (hub-only)
       joinError: null,         // e.g., ROOM_LOCKED, NO_SUCH_ROOM
+      lstTracks: [],           // [{ id, title, artist }] Uppdatera för rätt parametrar
 
       // -------- Simple Game Settings (from server) --------
       config: { maxQuestions: 10, defaultDurationMs: 20000, selectedPlaylistIDs: [] },
@@ -150,8 +151,9 @@ export const makeGameStore = (serverUrl) => {
         });
       },
 
+      setTrackList: (newLstTracks) => {set({ lstTracks: newLstTracks });},
       // host OR first player can start the game
-      startGame: () => s.emit("game:startGame", { code: get().code }),
+      startGame: () => s.emit("game:startGame", { code: get().code, lstTracks: get().lstTracks }),
       // backward-compat alias
       startRound: () => s.emit("game:startGame", { code: get().code }),
 

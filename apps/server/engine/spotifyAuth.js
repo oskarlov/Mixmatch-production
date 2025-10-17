@@ -1,6 +1,6 @@
 import { ID } from "../../../packages/shared/apiConfig.js"; // "../apiConfig.js";
 
-const redirectUri = `${window.location.origin}/callback`;
+// const redirectUri = `${window.location.origin}/callback`;
 // tidigare länkar window.location.origin; // "https://halting-unsheltering-christa.ngrok-free.dev"; // Updatera efter deployment
 
 // Redirect to Spotify (PKCE)
@@ -34,8 +34,16 @@ export async function redirectToAuth() {
 
     const hashed = await sha256(codeVerifier)
     const codeChallenge = base64encode(hashed);
+    const redirectUri = `${window.location.origin}/callback`;
 
-    const scope = 'user-read-private user-read-email';
+    const scope = [
+        "user-read-private",
+        "playlist-read-private",
+        "playlist-read-collaborative",
+        "user-read-playback-state",
+        "user-modify-playback-state",
+        "streaming",
+      ].join(" ");
     const authUrl = new URL("https://accounts.spotify.com/authorize")
     const spotifyID = ID;
     console.log(spotifyID);
@@ -55,7 +63,7 @@ export async function redirectToAuth() {
 }
 
 
-// Exchange ?code -> tokens (call once after you return)
+// Exchange ?code -> tokens
 export async function requestToken() {
     const url = new URL(window.location.href);
     // Temp for testing
@@ -78,7 +86,8 @@ export async function requestToken() {
     if (!returnedState || returnedState !== storedState) {
       throw new Error("State mismatch. Start the login flow from the same origin.");
     }
-  
+    
+    const redirectUri = `${window.location.origin}/callback`;
     const codeVerifier = localStorage.getItem("code_verifier");
     if (!codeVerifier) throw new Error("Missing code_verifier in localStorage");
   
@@ -86,7 +95,7 @@ export async function requestToken() {
       client_id: ID,
       grant_type: "authorization_code",
       code,
-      redirect_uri: redirectUri, // MUST exactly match step 1 and Spotify dashboard
+      redirect_uri: redirectUri,
       code_verifier: codeVerifier,
     });
   
@@ -126,4 +135,41 @@ export function hasSpotifyToken() {
 export async function getAccessToken() {
     // (Optional: add refresh flow here later if token expired)
     return hasSpotifyToken() ? localStorage.getItem("access_token") : null;
+}
+
+async function readJsonOrText(resp) {
+    const contentType = resp.headers.get("content-type") || "";
+    const raw = await resp.text();         // read the body ONCE
+  
+    let data = null;
+    if (contentType.includes("application/json")) {
+      try { data = JSON.parse(raw); } catch { /* malformed JSON – leave data null */ }
+    }
+    return { data, raw };
+  }
+
+export async function getPlaylistData(accessToken, playlistID) {
+    // url for get playlist API call
+    const url = new URL(`https://api.spotify.com/v1/playlists/${playlistID}/tracks`);
+    // "fields" filters to only give wanted playlist info
+    url.searchParams.set(
+        "fields", 
+        "items(track(id,name,artists(name),album(name,images)))"
+    ); // only return tracks.items
+    // fetch with access token
+    const resp = await fetch(url, {
+        headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+    });
+    // const data = await resp.json();
+    const { data, raw } = await readJsonOrText(resp);
+    if (!resp.ok) {
+        const msg =
+            data?.error?.message ||
+            data?.error_description ||
+            raw ||
+            `Spotify error ${resp.status}`;
+        throw new Error(msg);
+    }
+
+    return data.items.map(i => i.track);
 }
