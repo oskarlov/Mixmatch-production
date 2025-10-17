@@ -1,12 +1,12 @@
 
 const dictPlaylistID = {
     // Playlist IDs decades
-    pl60s : "37i9dQZF1DXaKIA8E7WcJj",
-    pl70s : "37i9dQZF1DWTJ7xPn4vNaz",
-    pl80s : "37i9dQZF1DX4UtSsGT1Sbe",
-    pl90s : "37i9dQZF1DXbTxeAdrVG2l",
-    pl00s : "37i9dQZF1DX4o1oenSJRJd",
-    pl10s : "37i9dQZF1DX5Ejj0EkURtP",
+    pl60s : "7jPqGZ59SYdfROv1fbQ3ix", // "37i9dQZF1DXaKIA8E7WcJj",
+    pl70s : "0aZwy6AtOIf8lcweaIuq2G", // "37i9dQZF1DWTJ7xPn4vNaz",
+    pl80s : "01eleej6PUA5r0EKMt9nO6", // "37i9dQZF1DX4UtSsGT1Sbe",
+    pl90s : "35unr1s5wtJzuURYw9JtcA", // "37i9dQZF1DXbTxeAdrVG2l",
+    pl00s : "7eMpggGjI2UdYxmqMgWzfw", // "37i9dQZF1DX4o1oenSJRJd",
+    pl10s : "3w3Gg6egk7V8IbZGaZg4xX", // "37i9dQZF1DX5Ejj0EkURtP",
     // Playlist IDs genres
     plRock : "37i9dQZF1DWXRqgorJj26U",
     plClassicRock : "37i9dQZF1DWXRqgorJj26U",
