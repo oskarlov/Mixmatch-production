@@ -7,7 +7,7 @@ export default defineConfig({
   // Server is for setting up ngrok tunnel for localhost. Only needed before deployment.
   server: {
     host: true, // listen on all interfaces (needed behind proxies/tunnels)
-    allowedHosts: ['halting-unsheltering-christa.ngrok-free.dev',"snubbingly-projective-chadwick.ngrok-free.dev"], // <- your ngrok host
+    allowedHosts: ['halting-unsheltering-christa.ngrok-free.dev',"snubbingly-projective-chadwick.ngrok-free.dev", "carmella-hypsometric-justa.ngrok-free.dev"], // <- your ngrok host
     hmr: { clientPort: 443 }, // helps HMR over HTTPS tunnels
   },
   cacheDir: '/tmp/vite-hub',
