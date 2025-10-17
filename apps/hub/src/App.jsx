@@ -28,8 +28,8 @@ function Hub() {
     progress = { answered: 0, total: 0 },
     perOptionCounts = [],
     leaderboard = [],
-    createRoom, startGame, nextQuestion, playAgain, toLobby,
-    seedTracks, setTrackList, // NEW (add this action in your store to emit game:seedTracks)
+    createRoom, getConfig, setTrackList, startGame, nextQuestion, playAgain, toLobby,
+    seedTracks, // NEW (add this action in your store to emit game:seedTracks)
   } = useGame();
 
   /* ---------------- Hub audio (host-only media) ---------------- */
@@ -79,20 +79,23 @@ function Hub() {
   const onStart = useCallback(async () => {
     const currentConfig = getConfig();
     const selectedID = currentConfig.selectedPlaylistIDs[0];
+    console.log(selectedID);
     const numTracks = currentConfig.maxQuestions;
-    const tracks = await makeTrackList("7eMpggGjI2UdYxmqMgWzfw", numTracks);
+    const tracks = await makeTrackList(selectedID, numTracks);
     setTrackList(tracks);
     startGame();
   }, [setTrackList, startGame]);
   // After /callback: if pending_action was "createRoom" and we now have token → create the room
+  /* // Redan lagt till i SpotifyCallback.jsx tror gammal kod???
   useEffect(() => {
     const pending = localStorage.getItem("pending_action");
     if (pending === "createRoom" && hasSpotifyToken()) {
       localStorage.removeItem("pending_action");
       createRoom();
     }
-  }, [createRoom]);
+  }, [createRoom]);*/
 
+  // Är denna samma som onStart???
   // Start flow: if Spotify + playlists selected, collect tracks → seed → start
   const onStartGame = useCallback(async () => {
     try {
