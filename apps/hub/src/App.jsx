@@ -1,8 +1,10 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom"; // Router
 import SpotifyCallback from "./SpotifyCallback";                  // Handles token exchange
 import { useEffect, useRef, useState, useCallback } from "react";
-import { redirectToAuth, hasSpotifyToken, } from "../../server/engine/spotifyAuth.js";
 import { makeTrackList } from "../../server/engine/mediaEngine";
+import { redirectToAuth, hasSpotifyToken } from "../../server/engine/spotifyAuth.js";
+import { collectTracksFromPlaylists, startPlayback } from "./spotify/spotifyClient.js"; // Spotify API helpers
+
 // If you published the shared package with this name (recommended):
 // import { makeGameStore } from "@mixmatch/shared/gameStore";
 // Temporary relative imports (keep your own paths)
@@ -22,25 +24,45 @@ const MIN_H_FOR_CURTAINS = 650;
 
 function Hub() {
   const {
-    code, players, hostId, stage, question, seconds, media, lstTracks,
+    code, players, hostId, stage, question, seconds, media, config, lstTracks,
     progress = { answered: 0, total: 0 },
     perOptionCounts = [],
     leaderboard = [],
-    createRoom, setTrackList, startGame, nextQuestion, playAgain, toLobby,
+    createRoom, startGame, nextQuestion, playAgain, toLobby,
+    seedTracks, setTrackList, // NEW (add this action in your store to emit game:seedTracks)
   } = useGame();
 
   /* ---------------- Hub audio (host-only media) ---------------- */
   const audioRef = useRef(null);
   const [autoplayReady, setAutoplayReady] = useState(false);
-
+  const lastPlayedQuestionRef = useRef(null);
+  // Prefer Spotify Connect (if authorized + URI present); otherwise fall back to preview audio
   useEffect(() => {
-    if (!media?.audioUrl || !audioRef.current) return;
-    const el = audioRef.current;
-    el.src = media.audioUrl;
-    const tryPlay = async () => {
-      try { await el.play(); } catch {}
-    };
-    tryPlay();
+    let cancelled = false;
+    (async () => {
+      if (!media || !audioRef.current) return;
+
+      const { spotifyUri, audioUrl } = media;
+
+      // 1) Try Spotify Connect if possible
+      if (spotifyUri && hasSpotifyToken()) {
+        try {
+          await startPlayback({ uris: [spotifyUri], position_ms: 0 });
+          return; // success, don't touch <audio>
+        } catch (err) {
+          console.warn("Spotify Connect playback failed; falling back to preview:", err);
+        }
+      }
+
+      // 2) Fallback: preview audio in the <audio> element
+      if (!cancelled && audioUrl) {
+        const el = audioRef.current;
+        el.src = audioUrl;
+        try { await el.play(); } catch {}
+      }
+    })();
+
+    return () => { cancelled = true; };
   }, [media]);
 
   // Create room, but bounce to Spotify auth if needed
@@ -58,6 +80,31 @@ function Hub() {
     setTrackList(tracks);
     startGame();
   }, [setTrackList, startGame]);
+  // After /callback: if pending_action was "createRoom" and we now have token → create the room
+  useEffect(() => {
+    const pending = localStorage.getItem("pending_action");
+    if (pending === "createRoom" && hasSpotifyToken()) {
+      localStorage.removeItem("pending_action");
+      createRoom();
+    }
+  }, [createRoom]);
+
+  // Start flow: if Spotify + playlists selected, collect tracks → seed → start
+  const onStartGame = useCallback(async () => {
+    try {
+      const picks = Array.isArray(config?.selectedPlaylistIDs) ? config.selectedPlaylistIDs : [];
+      if (hasSpotifyToken() && picks.length) {
+        const tracks = await collectTracksFromPlaylists(picks, { perList: 60, maxTotal: 400 });
+        await new Promise((resolve) =>
+          seedTracks(tracks, (res) => resolve(res))
+        );
+      }
+    } catch (e) {
+      console.warn("Seeding from Spotify failed:", e);
+    } finally {
+      startGame();
+    }
+  }, [config?.selectedPlaylistIDs, seedTracks, startGame]);
 
   /* ---------------- Spotlight + Curtains orchestration ---------------- */
   const [spotlightActive, setSpotlightActive] = useState(false);
@@ -531,6 +578,7 @@ function SecondaryButton({ children, className = "", ...props }) {
 function AudioBlock({ audioRef, autoplayReady, setAutoplayReady }) {
   return (
     <Card title="Hub audio">
+      {/* This <audio> only plays preview fallbacks; Spotify Connect uses the app */}
       <audio ref={audioRef} controls className="w-full" />
       {!autoplayReady && (
         <div className="mt-2 flex justify-center">
