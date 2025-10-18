@@ -155,7 +155,7 @@ export async function getPlaylistData(accessToken, playlistID) {
     // "fields" filters to only give wanted playlist info
     url.searchParams.set(
         "fields", 
-        "items(track(id,name,artists(name),album(name,images)))"
+        "items(track(id,uri,preview_url,name,artists(name),album(name,images)))"
     ); // only return tracks.items
     // fetch with access token
     const resp = await fetch(url, {

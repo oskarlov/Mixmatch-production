@@ -5,7 +5,7 @@ const dictPlaylistID = {
     pl70s : "37i9dQZF1DWTJ7xPn4vNaz",
     pl80s : "37i9dQZF1DX4UtSsGT1Sbe",
     pl90s : "37i9dQZF1DXbTxeAdrVG2l",
-    pl00s : "37i9dQZF1DX4o1oenSJRJd",
+    pl00s : "6fDxnmrv3kXmWQAgwz5lVb",
     pl10s : "37i9dQZF1DX5Ejj0EkURtP",
     // Playlist IDs genres
     plRock : "37i9dQZF1DWXRqgorJj26U",

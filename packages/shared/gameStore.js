@@ -41,7 +41,7 @@ export const makeGameStore = (serverUrl) => {
         players,
         hostId,
         firstPlayerId: firstPlayerId ?? st.firstPlayerId,
-        config: config || st.config || init.config, // keep server as source of truth
+        config: { ...(st.config || init.config), ...(config || {}) }, // keep server as source of truth
         // only set lobby when we were idle; otherwise keep gameplay stage
         stage: code ? (st.stage === "idle" ? "lobby" : st.stage) : "idle",
       }))
@@ -61,6 +61,7 @@ export const makeGameStore = (serverUrl) => {
         resultUntil: null,
         perOptionCounts: [],
         leaderboard: [],
+        media: null,
       });
     });
 
@@ -76,6 +77,7 @@ export const makeGameStore = (serverUrl) => {
         perOptionCounts: [],
         leaderboard: [],
         progress: { answered: 0, total: get().players.length || 0 },
+        media: null,
       });
     });
 
@@ -91,6 +93,7 @@ export const makeGameStore = (serverUrl) => {
         perOptionCounts: [],
         leaderboard: [],
         progress: { answered: 0, total: get().players.length || 0 },
+        media: null,
       });
     });
 
@@ -131,9 +134,8 @@ export const makeGameStore = (serverUrl) => {
       createRoom: () => s.emit("host:createRoom"),
       // in actions return {...}, add:
       seedTracks: (tracks, cb) => {
-      const s = getSocket();
-      s.emit("game:seedTracks", { code: get().code, tracks }, (res) => cb?.(res));
-      },
+        s.emit("game:seedTracks", { code: get().code, tracks }, (res) => cb?.(res));
+        },
 
       // PLAYER: join (no auto-rejoin, no storage; always manual)
       joinRoom: (code, name, cb) => {
@@ -156,6 +158,9 @@ export const makeGameStore = (serverUrl) => {
         });
       },
 
+      // gives current config
+      getConfig: () => get().config,
+      // updates tracklist
       setTrackList: (newLstTracks) => {set({ lstTracks: newLstTracks });},
       // host OR first player can start the game
       startGame: () => s.emit("game:startGame", { code: get().code, lstTracks: get().lstTracks }),
@@ -186,26 +191,14 @@ export const makeGameStore = (serverUrl) => {
       // optional manual reveal trigger (host)
       reveal: () => s.emit("game:reveal", { code: get().code }),
 
-      // PLAYER: submit MCQ answer (option index)
+      // PLAYER: submit an answer (locks locally)
       submitAnswer: (answerIndex) => {
         const q = get().question;
-        if (!q || q.type !== "multiple-choice") return;
+        if (!q) return;
         s.emit("answer:submit", {
           code: get().code,
           questionId: q.id,
           answerIndex,
-        });
-        set({ stage: "locked" });
-      },
-    
-      // PLAYER: submit track-recognition answer (free text)
-      submitTextAnswer: (text) => {
-        const q = get().question;
-        if (!q || q.type !== "track-recognition") return;
-        s.emit("answer:submit", {
-          code: get().code,
-          questionId: q.id,
-          text, // <-- server will read this for track-recognition
         });
         set({ stage: "locked" });
       },
@@ -216,7 +209,7 @@ export const makeGameStore = (serverUrl) => {
         s.emit("game:updateConfig", { code, ...partial }, (res) => {
           if (res?.ok && res.config) set({ config: res.config });
           cb?.(res);
-        });
+      });
       },
     };
   });
