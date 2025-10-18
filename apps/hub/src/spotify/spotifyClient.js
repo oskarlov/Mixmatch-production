@@ -227,30 +227,66 @@ export async function transferPlaybackTo(device_id, { play = false } = {}) {
  *   }, []);
  */
 // Replace your current attachPlaybackController with THIS version
+// ... keep existing imports and helpers ...
+
 export function attachPlaybackController(useGame) {
-  // pick just what we need from state
   const select = (s) => ({
     stage: s.stage,
     qid: s.question?.id || null,
     uri: s.media?.spotifyUri || null,
   });
-  const same = (a, b) =>
-    a.stage === b.stage && a.qid === b.qid && a.uri === b.uri;
+  const same = (a, b) => a.stage === b.stage && a.qid === b.qid && a.uri === b.uri;
 
   let last = select(useGame.getState());
   let lastQ = null;
   let playedThisQ = false;
+  let keepAlive = null; // ← new
+
+  async function ensurePlaying(uri) {
+    try {
+      const st = await getPlaybackState().catch(() => null);
+      const isPlaying = !!st?.is_playing;
+      const sameTrack = !!(st?.item?.uri && uri && st.item.uri === uri);
+      if (isPlaying && sameTrack) return;
+
+      // If we already started this context, a bare /play resumes; else start fresh
+      if (sameTrack) {
+        // resume on current context
+        const id = await (async () => {
+          try { return await (async () => { /* ensure device pick */ return await (async () => null)(); })(); }
+          catch { return null; }
+        })();
+        try {
+          await api(`/me/player/play${id ? `?device_id=${encodeURIComponent(id)}` : ""}`, {
+            method: "PUT",
+            body: JSON.stringify({}), // empty body resumes
+          });
+          return;
+        } catch {
+          // fall back to a full start if resume fails
+        }
+      }
+      await startPlayback({ uris: [uri], position_ms: 0 });
+    } catch (e) {
+      console.warn("[ctrl] keepalive resume failed", e);
+    }
+  }
 
   async function react(curr, prev) {
     const { stage, qid, uri } = curr;
     console.log("[ctrl]", curr);
 
-    // entering a new question → stop previous song immediately
     const entering = stage === "question" && qid && qid !== lastQ;
+    const leavingQuestion = prev.stage === "question" && stage !== "question";
+
     if (entering) {
       lastQ = qid;
       playedThisQ = false;
+
+      // clear any previous loop and pause previous track, then start fresh
+      if (keepAlive) { clearInterval(keepAlive); keepAlive = null; }
       try { await pausePlayback(); } catch {}
+
       if (uri) {
         try {
           console.log("[ctrl] entering → start", uri);
@@ -260,13 +296,27 @@ export function attachPlaybackController(useGame) {
           console.warn("[ctrl] play fail (enter)", e);
         }
       }
+
+      // start keepalive loop for this question
+      if (!keepAlive) {
+        keepAlive = setInterval(() => {
+          const st = select(useGame.getState());
+          if (st.stage === "question" && st.qid === lastQ && st.uri) {
+            ensurePlaying(st.uri);
+          }
+        }, 600);
+      }
       return;
     }
 
-    // URI arrived after question already started (race fix)
-    const uriArrived =
-      stage === "question" && qid === lastQ && !playedThisQ && !!uri && prev.uri !== uri;
+    if (leavingQuestion) {
+      if (keepAlive) { clearInterval(keepAlive); keepAlive = null; }
+      // we intentionally do NOT pause here (reveal/result can keep playing)
+      return;
+    }
 
+    // URI arrived later during same question (race fix)
+    const uriArrived = stage === "question" && qid === lastQ && !playedThisQ && !!uri && prev.uri !== uri;
     if (uriArrived) {
       try {
         console.log("[ctrl] media arrived → start", uri);
@@ -278,10 +328,9 @@ export function attachPlaybackController(useGame) {
       return;
     }
 
-    // stop at gameover (we intentionally do NOT stop at reveal/result)
-    const stopNow = stage === "gameover";
-    if (stopNow) {
-      console.log("[ctrl] result/gameover → pause");
+    if (stage === "gameover") {
+      console.log("[ctrl] gameover → pause");
+      if (keepAlive) { clearInterval(keepAlive); keepAlive = null; }
       try { await pausePlayback(); } catch {}
     }
   }
@@ -289,22 +338,20 @@ export function attachPlaybackController(useGame) {
   // run once immediately (covers reload mid-question)
   react(last, last);
 
-  // subscribe to any state change and diff manually
   const unsub = useGame.subscribe(() => {
     const curr = select(useGame.getState());
     if (same(curr, last)) return;
-    const prev = last;
-    last = curr;
+    const prev = last; last = curr;
     react(curr, prev);
   });
 
-  // prevent duplicate controllers after hot reload
   if (typeof window !== "undefined") {
     try { window.__mm_playback_unsub?.(); } catch {}
     window.__mm_playback_unsub = unsub;
   }
   return () => {
     try { unsub(); } catch {}
+    if (keepAlive) { clearInterval(keepAlive); keepAlive = null; }
     if (typeof window !== "undefined" && window.__mm_playback_unsub === unsub) {
       window.__mm_playback_unsub = null;
     }

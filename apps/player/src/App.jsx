@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback} from "react";
 import { makeGameStore } from "../../../packages/shared/gameStore.js";
 import EmoteDrawer, { EmoteOpener } from "./components/EmoteDrawer.jsx";
 
@@ -77,6 +77,20 @@ export default function Player() {
   useEffect(() => {
     if (stage !== "question") setPicked(null);
   }, [stage, questionKey]);
+  const onPlayerPlayAgain = useCallback(() => {
+  playAgain((res) => {
+    if (!res?.ok) {
+      const msg =
+        res?.error === "NOT_ALLOWED" ? "Only host/first player can restart."
+      : res?.error === "NOT_GAMEOVER" ? "Wait until the game ends first."
+      : res?.error || "Unknown error";
+      console.warn("[Player] playAgain failed:", res);
+      alert(msg);
+      return;
+    }
+    console.log("[Player] Play again → ok", res);
+  });
+}, [playAgain]);
 
   /* ========================= Renders ========================= */
 
@@ -139,12 +153,26 @@ export default function Player() {
             {players.length === 0 && <Muted>No players yet…</Muted>}
           </Card>
           {isFirst ? (
-            <PrimaryButton onClick={startGame} className="w-full py-3 text-lg">
-              Start game
-            </PrimaryButton>
-          ) : (
-            <Muted className="text-center">Waiting for the first player…</Muted>
-          )}
+  <PrimaryButton
+    onClick={() => {
+      startGame((res) => {
+        if (!res?.ok) {
+          // These come directly from the server
+          if (res.error === "NO_TRACKS" || res.error === "NO_PLAYABLE_TRACKS") {
+            alert("Host hasn’t seeded a playlist yet. Ask the host to pick one — or try again to use demo tracks.");
+          } else {
+            alert("Couldn’t start yet. Please try again.");
+          }
+        }
+      });
+    }}
+    className="w-full py-3 text-lg"
+  >
+    Start game
+  </PrimaryButton>
+) : (
+  <Muted className="text-center">Waiting for the first player…</Muted>
+)}
         </div>
       </Screen>
     );
@@ -164,7 +192,7 @@ export default function Player() {
         <div className="flex gap-2">
           {isFirst ? (
             <>
-              <PrimaryButton onClick={playAgain} className="flex-1">Play again</PrimaryButton>
+              <PrimaryButton onClick={onPlayerPlayAgain} className="flex-1">Play again</PrimaryButton>
               <SecondaryButton onClick={toLobby} className="flex-1">Back to lobby</SecondaryButton>
             </>
           ) : (

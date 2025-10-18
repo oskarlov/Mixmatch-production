@@ -163,7 +163,9 @@ export const makeGameStore = (serverUrl) => {
       // updates tracklist
       setTrackList: (newLstTracks) => {set({ lstTracks: newLstTracks });},
       // host OR first player can start the game
-      startGame: () => s.emit("game:startGame", { code: get().code, lstTracks: get().lstTracks }),
+      startGame: (cb) =>
+        s.emit("game:startGame", { code: get().code, lstTracks: get().lstTracks }, cb),
+
       // backward-compat alias
       startRound: () => s.emit("game:startGame", { code: get().code }),
 
@@ -171,7 +173,8 @@ export const makeGameStore = (serverUrl) => {
       advance: () => s.emit("game:advance", { code: get().code }),
 
       // game over controls
-      playAgain: () => s.emit("game:playAgain", { code: get().code }),
+      playAgain: (cb) =>
+        s.emit("game:playAgain", { code: get().code }, (res) => cb?.(res)),
       toLobby: () =>
         s.emit("game:toLobby", { code: get().code }, (res) => {
           if (res?.ok) {

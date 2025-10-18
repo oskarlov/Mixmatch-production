@@ -1,80 +1,68 @@
-import { getPlaylistData, getAccessToken } from "./spotifyAuth.js";
+// server/engine/mediaEngine.js
 
-export async function makeTrackList(playlistID, n) {
-  // optional shuffle helper
-  function shuffle(a) {
-    for (let i = a.length - 1; i > 0; i--) {
-      const j = (Math.random() * (i + 1)) | 0;
-      [a[i], a[j]] = [a[j], a[i]];
-    }
-    return a;
-  }
+import { getAccessToken, getPlaylistData } from "./spotifyAuth.js";
 
-  // normalize raw Spotify track -> game shape
-  function toGameTrack(t) {
-    if (!t || !t.id) return null;
-    const artists = (t.artists || []).map(a => a?.name).filter(Boolean);
-    return {
-      id: t.id,                             // ✅ real Spotify track id
-      title: t.name || "",
-      artist: artists.join(", "),
-      previewUrl: t.preview_url || null,    // ✅ for browser fallback
-      uri: t.uri || null,                   // ✅ for Spotify Connect
-    };
-  }
-
-  const HARDCODED_TRACKS = [
-    { id: "t1",  title: "Billie Jean",             artist: "Michael Jackson" },
-    { id: "t2",  title: "Smells Like Teen Spirit", artist: "Nirvana" },
-    { id: "t3",  title: "One More Time",           artist: "Daft Punk" },
-    { id: "t4",  title: "Dancing Queen",           artist: "ABBA" },
-    { id: "t5",  title: "Blinding Lights",         artist: "The Weeknd" },
-    { id: "t6",  title: "Shake It Off",            artist: "Taylor Swift" },
-    { id: "t7",  title: "Hey Ya!",                 artist: "OutKast" },
-    { id: "t8",  title: "HUMBLE.",                 artist: "Kendrick Lamar" },
-    { id: "t9",  title: "Poker Face",              artist: "Lady Gaga" },
-    { id: "t10", title: "Take On Me",              artist: "a-ha" },
-  ];
-
-  const token = await getAccessToken();
-  if (!token) {
-    return HARDCODED_TRACKS; // no login yet; keeps your old behavior
-  }
-
-  // low-level: one page from the playlist (ensure getPlaylistData fields include id, uri, preview_url)
-  const raw = await getPlaylistData(token, playlistID);   // -> array of raw track objects
-
-  // normalize + de-dup by id
-  const seen = new Set();
-  const normalized = [];
-  for (const t of raw) {
-    const gt = toGameTrack(t);
-    if (gt && !seen.has(gt.id)) {
-      seen.add(gt.id);
-      normalized.push(gt);
-    }
-  }
-
-  // randomize BEFORE slice (as you noted)
-  shuffle(normalized);
-
-  // clamp to n and return
-  return normalized.slice(0, n);
+function normPlaylistId(input) {
+  const s = String(input || "").trim();
+  const m1 = s.match(/spotify:playlist:([A-Za-z0-9]{22})/);
+  if (m1) return m1[1];
+  const m2 = s.match(/open\.spotify\.com\/playlist\/([A-Za-z0-9]{22})/);
+  if (m2) return m2[1];
+  const m3 = s.match(/^([A-Za-z0-9]{22})$/);
+  return m3 ? m3[1] : s;
 }
 
+function shuffle(a) {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = (Math.random() * (i + 1)) | 0;
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
 
-// example
-// Provide at least { id, title, artist, previewUrl? }.
-/*
-const HARDCODED_TRACKS = [
-    { id: "t1",  title: "Billie Jean",                 artist: "Michael Jackson" },
-    { id: "t2",  title: "Smells Like Teen Spirit",     artist: "Nirvana" },
-    { id: "t3",  title: "One More Time",               artist: "Daft Punk" },
-    { id: "t4",  title: "Dancing Queen",               artist: "ABBA" },
-    { id: "t5",  title: "Blinding Lights",             artist: "The Weeknd" },
-    { id: "t6",  title: "Shake It Off",                artist: "Taylor Swift" },
-    { id: "t7",  title: "Hey Ya!",                     artist: "OutKast" },
-    { id: "t8",  title: "HUMBLE.",                     artist: "Kendrick Lamar" },
-    { id: "t9",  title: "Poker Face",                  artist: "Lady Gaga" },
-    { id: "t10", title: "Take On Me",                  artist: "a-ha" },
-  ];*/
+function toGameTrack(t) {
+  if (!t || !t.id) return null;
+  const artists = Array.isArray(t.artists) ? t.artists.map(a => a?.name).filter(Boolean) : [];
+  if (artists.length === 0) return null;
+  return {
+    id: t.id,
+    title: String(t.name || "").trim(),
+    artist: artists.join(", "),
+    previewUrl: t.preview_url || null,
+    uri: t.uri || null,
+  };
+}
+
+export async function makeTrackList(playlistID, n) {
+  const id = normPlaylistId(playlistID);
+  const num = Math.max(1, Number(n || 10));
+
+  console.log(`[makeTrackList] Request: ${num} from ${id}`);
+
+  const token = await getAccessToken();
+  if (!token) throw new Error("No Spotify token. Please log in again.");
+
+  const raw = await getPlaylistData(token, id);
+  if (!raw || !Array.isArray(raw)) throw new Error(`Spotify returned ${typeof raw}, expected array`);
+
+  const tracks = raw.map((x) => x?.track || x).filter(Boolean);
+  if (!tracks.length) throw new Error("Playlist returned no items");
+
+  const seen = new Set();
+  const normalized = tracks
+    .map(toGameTrack)
+    .filter(Boolean)
+    // *** only keep playable tracks ***
+    .filter((t) => !!t.uri || !!t.previewUrl)
+    // de-dup by id
+    .filter((t) => (seen.has(t.id) ? false : (seen.add(t.id), true)));
+
+  console.log(`[makeTrackList] Normalized to ${normalized.length} playable tracks`);
+
+  if (!normalized.length) throw new Error("Playlist has no playable tracks (no URI/previews).");
+
+  shuffle(normalized);
+  const result = normalized.slice(0, num);
+  console.log(`[makeTrackList] ✓ Returning ${result.length} Spotify tracks`);
+  return result;
+}
