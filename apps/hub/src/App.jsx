@@ -5,6 +5,9 @@ import { makeTrackList } from "../../server/engine/mediaEngine";
 import { redirectToAuth, hasSpotifyToken } from "../../server/engine/spotifyAuth.js";
 import { collectTracksFromPlaylists, startPlayback, pausePlayback, attachPlaybackController  } from "./spotify/spotifyClient.js"; // Spotify API helpers
 import dictPlaylistID from "../../../packages/shared/PlayListIDs.js"; // adjust path if needed
+import { useGameStore } from "./store";
+//import { useGame } from "../../../packages/shared/gameStore.js";
+import { getSocket } from "../../../packages/shared/socket.js";
 
 // If you published the shared package with this name (recommended):
 // import { makeGameStore } from "@mixmatch/shared/gameStore";
@@ -12,7 +15,6 @@ import dictPlaylistID from "../../../packages/shared/PlayListIDs.js"; // adjust 
 import TheaterBackground from "./components/TheaterBackground.jsx";
 import SpotlightOverlay from "./components/SpotlightOverlay.jsx";
 import CurtainOverlay from "./components/CurtainOverlay.jsx";
-import { useGameStore } from "./store";
 import LobbySettings from "./components/LobbySettings.jsx";
 import EmoteStream from "./components/EmoteStream.jsx";
 
@@ -56,104 +58,59 @@ const onCreate = useCallback(() => {
 }, [createRoom]);
 
 const onStart = useCallback(async () => {
-  try {
-    const cfg = getConfig();
-    const keyOrId = cfg?.selectedPlaylistIDs?.[0];
-    if (!keyOrId) { alert("Please select a genre or decade before starting!"); return; }
+  const cfg = getConfig();
+  const keyOrId = cfg?.selectedPlaylistIDs?.[0];
+  const mapped = (dictPlaylistID && dictPlaylistID[keyOrId]) || keyOrId || "";
+  const playlistId = (String(mapped).match(/[A-Za-z0-9]{22}/) || [])[0];
+  const numTracks = Math.max(1, Number(cfg?.maxQuestions || 10));
 
-    const mapped = dictPlaylistID[keyOrId] || keyOrId;
-    const extractId = (s) => {
-      const m1 = String(s).match(/spotify:playlist:([A-Za-z0-9]{22})/); if (m1) return m1[1];
-      const m2 = String(s).match(/open\.spotify\.com\/playlist\/([A-Za-z0-9]{22})/); if (m2) return m2[1];
-      const m3 = String(s).match(/^([A-Za-z0-9]{22})$/); return m3 ? m3[1] : null;
-    };
-    const playlistId = extractId(mapped);
-    if (!playlistId) { alert("Invalid playlist selection"); return; }
+  const tracks = await makeTrackList(playlistId, numTracks);
 
-    const numTracks = Math.max(1, Number(cfg?.maxQuestions || 10));
-    console.log(`[onStart] Building tracklist from playlist: ${playlistId}`);
+  // pass meta so the server remembers playlist + count
+  seedTracks(tracks, { playlistId, numTracks });
+  startGame();
+}, []);
 
-    let tracks;
+
+const onPlayAgain = useCallback(async () => {
+  const cfg = getConfig();
+  const keyOrId = cfg?.selectedPlaylistIDs?.[0];
+  const mapped = (dictPlaylistID && dictPlaylistID[keyOrId]) || keyOrId || "";
+  const playlistId = (String(mapped).match(/[A-Za-z0-9]{22}/) || [])[0];
+  const numTracks = Math.max(1, Number(cfg?.maxQuestions || 10));
+
+  const tracks = await makeTrackList(playlistId, numTracks);
+  seedTracks(tracks, { playlistId, numTracks });
+  // restart with a fresh set, keep the same settings
+  startGame();
+  //playAgain(tracks, { playlistId, numTracks });
+  //setTrackList(tracks);
+}, []);
+
+
+
+useEffect(() => {
+  const s = getSocket();
+
+  async function onRequestReseed({ source }) {
     try {
-      tracks = await makeTrackList(playlistId, numTracks);
-      console.log(`[onStart] ✓ Collected ${tracks.length} tracks from Spotify`);
-    } catch (e) {
-      console.error("[onStart] Spotify failed:", e);
-      const useFallback = confirm(
-        `Spotify fetch failed: ${e.message}\n\nUse demo tracks instead?`
-      );
-      if (!useFallback) return;
-      tracks = [
-        { id: "t1", title: "Billie Jean", artist: "Michael Jackson" },
-        { id: "t2", title: "Smells Like Teen Spirit", artist: "Nirvana" },
-        { id: "t3", title: "One More Time", artist: "Daft Punk" },
-        { id: "t4", title: "Dancing Queen", artist: "ABBA" },
-        { id: "t5", title: "Blinding Lights", artist: "The Weeknd" },
-        { id: "t6", title: "Shake It Off", artist: "Taylor Swift" },
-        { id: "t7", title: "Hey Ya!", artist: "OutKast" },
-        { id: "t8", title: "HUMBLE.", artist: "Kendrick Lamar" },
-        { id: "t9", title: "Poker Face", artist: "Lady Gaga" },
-        { id: "t10", title: "Take On Me", artist: "a-ha" },
-      ].slice(0, numTracks);
-    }
-
-    // Require at least one playable asset to guarantee hub media
-    const hasPlayable = tracks.some(t => !!t.uri || !!t.previewUrl);
-    if (!hasPlayable) {
-      alert("No playable tracks (no Spotify URI / previews). Pick another playlist.");
-      return;
-    }
-
-    // Belt & suspenders: send via dedicated seed AND include in start payload
-    setTrackList(tracks);
-
-    await new Promise((resolve, reject) => {
-      seedTracks(tracks, (res) => {
-        console.log("[onStart] seedTracks →", res);
-        if (res?.ok) resolve();
-        else reject(new Error(res?.error || "Seed failed"));
+      const tracks = await makeTrackList(source.playlistId, source.numTracks);
+      // restart on server with these tracks + remember the source
+      useGame.getState().playAgain(tracks, {
+        playlistId: source.playlistId,
+        numTracks: source.numTracks,
       });
-    });
-
-    console.log("[onStart] Starting game…");
-    startGame((res) => {
-      if (!res?.ok) {
-    console.warn("[onStart] startGame rejected →", res);
-       if (res.error === "NO_PLAYABLE_TRACKS" || res.error === "NO_TRACKS") {
-      alert("This selection has no playable tracks. Pick another playlist.\n\n(Or use demo tracks if you just want to test.)");
-      // If you want a one-click fallback:
-      // useDemoTracks(() => startGame());
-    } else if (res.error === "ALREADY_STARTED") {
-      // ignore (someone double-clicked); the server will continue
-    } else {
-      alert("Failed to start game. Please try again.");
+      // keep any Hub-side UI lists in sync
+      setTrackList(tracks);
+    } catch (e) {
+      console.error("[Hub] requestReseed failed:", e);
+      // optional: toast/alert here
     }
   }
-});
 
-  } catch (error) {
-    console.error("[onStart] Failed:", error);
-    alert(`Failed to start game: ${error.message}`);
-  }
-}, [getConfig, seedTracks, startGame, setTrackList]);
-
-const onPlayAgain = useCallback(() => {
-  playAgain((res) => {
-    if (!res?.ok) {
-      const msg =
-        res?.error === "NOT_GAMEOVER" ? "Wait until the game ends first."
-      : res?.error === "NOT_ALLOWED" ? "Only the host or first player can restart."
-      : res?.error === "NO_PLAYLIST_SELECTED" ? "Pick a playlist in the lobby first."
-      : res?.error || "Unknown error";
-      alert(`Couldn't restart: ${msg}`);
-      return;
-    }
-    console.log("[Hub] Play again → ok", res);
-  });
-}, [playAgain]);
-
-
-
+  s.on("server:requestReseed", onRequestReseed);
+  return () => s.off("server:requestReseed", onRequestReseed);
+}, []);
 // After /callback: if pending_action was "createRoom" and we now have token → create the room
 useEffect(() => {
   const pending = localStorage.getItem("pending_action");
@@ -251,7 +208,8 @@ useEffect(() => {
   if (stage === "idle") {
     content = <Landing onCreate={onCreate} />;
   } else if (stage === "lobby") {
-    const canStart = !!code && players.length >= 1;
+    const hasPick = !!(getConfig()?.selectedPlaylistIDs?.length);
+    const canStart = !!code && players.length >= 1 && hasPick;
     content = (
       <TheaterBackground bgUrl={THEATRE_BG}>
         {/* No curtains in lobby per your preference */}

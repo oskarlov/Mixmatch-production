@@ -309,6 +309,27 @@ export function registerGameEngine(io, mediaDir) {
       else startQuestion(room);
     }
   }
+  function normalizeTracks(tracks = []) {
+  const norm = tracks.map(t => ({
+    id: String(t.id || t.track?.id || ""),
+    title: String(t.title || t.name || t.track?.name || ""),
+    artist: String(t.artist || t.artists?.[0]?.name || t.track?.artists?.[0]?.name || ""),
+    previewUrl: t.previewUrl || t.preview_url || t.track?.preview_url || null,
+    uri: t.uri ? String(t.uri) : (t.track?.uri ? String(t.track.uri) : null),
+  })).filter(t => t.title && t.artist);
+
+  const seen = new Set();
+  return norm.filter(t => (t.id && !seen.has(t.id)) ? (seen.add(t.id), true) : false);
+  }
+
+  function setLastSource(room, meta) {
+  if (meta?.playlistId && meta?.numTracks) {
+    room.lastSource = {
+      playlistId: String(meta.playlistId),
+      numTracks: Number(meta.numTracks),
+      };
+    }
+  } 
 
   /** Reset scores & start again */
   function playAgain(room) {
@@ -645,19 +666,40 @@ function seedTracks(room) {
     });
 
     /** Play again (reset scores + start immediately) */
-    socket.on("game:playAgain", ({ code }, cb) => {
-      try {
-        const room = rooms.get(code || socket.data.code);
-        if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
-        if (!canControl(socket, room)) return cb?.({ ok: false, error: "NOT_ALLOWED" });
-        room.qCount = 0;
-        playAgain(room);
-        cb?.({ ok: true });
-      } catch (err) {
-        console.error("game:playAgain error", err);
-        cb?.({ ok: false, error: "SERVER_ERROR" });
+    socket.on("game:playAgain", ({ code, tracks }, cb) => {
+  try {
+    const room = rooms.get(code || socket.data.code);
+    if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
+    if (!canControl(socket, room)) return cb?.({ ok: false, error: "NOT_ALLOWED" });
+
+    // If host provided a fresh set, normalize + adopt it
+    if (Array.isArray(tracks) && socket.id === room.hostId) {
+      const norm = tracks.map(t => ({
+        id: String(t.id || ""),
+        title: String(t.title || t.name || ""),
+        artist: String(t.artist || ""),
+        previewUrl: t.previewUrl || null,
+        uri: t.uri ? String(t.uri) : null,
+      })).filter(t => t.title && t.artist);
+
+      const seen = new Set();
+      const dedup = norm.filter(t => (t.id && !seen.has(t.id)) ? (seen.add(t.id), true) : false);
+
+      if (dedup.length) {
+        room.spotifyTracks = dedup;
       }
-    });
+      // (no else — if empty/invalid we fall back to last known tracks)
+    }
+
+    room.qCount = 0; // reset round counter
+    playAgain(room); // this calls seedTracks(room) and immediately startQuestion(room)
+    cb?.({ ok: true });
+  } catch (err) {
+    console.error("game:playAgain error", err);
+    cb?.({ ok: false, error: "SERVER_ERROR" });
+  }
+});
+
 
     /** Back to lobby */
     socket.on("game:toLobby", ({ code }, cb) => {
@@ -711,40 +753,19 @@ function seedTracks(room) {
     });
 
     /** ------------------ NEW: Host seeds Spotify tracks before starting ------------------ */
-    socket.on("game:seedTracks", ({ code, tracks }, cb) => {
-      try {
-        const room = rooms.get(code || socket.data.code);
-        if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
-        if (socket.id !== room.hostId) return cb?.({ ok: false, error: "NOT_HOST" });
-        if (room.stage !== "lobby") return cb?.({ ok: false, error: "ALREADY_STARTED" });
+    socket.on("game:seedTracks", ({ code, tracks, meta }, cb) => {
+  try {
+    const room = rooms.get(code || socket.data.code);
+    if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
+    if (!canControl(socket, room)) return cb?.({ ok: false, error: "NOT_ALLOWED" });
 
-        // Minimal normalization + validation; uri is optional but recommended for Spotify Connect
-        const norm = (Array.isArray(tracks) ? tracks : [])
-          .map(t => ({
-            id: String(t.id || ""),
-            title: String(t.title || t.name || ""),
-            artist: String(t.artist || ""),
-            previewUrl: t.previewUrl || null,
-            uri: t.uri ? String(t.uri) : null,
-          }))
-          .filter(t => t.title && t.artist);
-
-        // de-duplicate by track id
-        const seen = new Set();
-        const dedup = norm.filter(t => (t.id && !seen.has(t.id)) ? (seen.add(t.id), true) : false);
-
-        if (!dedup.length) return cb?.({ ok: false, error: "NO_VALID_TRACKS" });
-
-        room.spotifyTracks = dedup;
-        // re-seed immediately so the UI's "remaining" counter updates
-        seedTracks(room);
-        emitRoomUpdate(room.code);
-
-        cb?.({ ok: true, count: dedup.length });
-      } catch (err) {
-        console.error("game:seedTracks error", err);
-        cb?.({ ok: false, error: "SERVER_ERROR" });
-      }
+    room.spotifyTracks = normalizeTracks(tracks);
+    setLastSource(room, meta);
+    cb?.({ ok: true });
+    } catch (err) {
+    console.error("game:seedTracks error", err);
+    cb?.({ ok: false, error: "SERVER_ERROR" });
+    }
     });
 
     /** ------------------ EMOTES (kept from your old index.js) ------------------ */
