@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { makeTrackList } from "../../server/engine/mediaEngine";
 import { redirectToAuth, hasSpotifyToken } from "../../server/engine/spotifyAuth.js";
 import { collectTracksFromPlaylists, startPlayback, pausePlayback, attachPlaybackController  } from "./spotify/spotifyClient.js"; // Spotify API helpers
-import dictPlaylistID from "../../../packages/shared/tempPlayListIDs.js"; // adjust path if needed
+import dictPlaylistID from "../../../packages/shared/PlayListIDs.js"; // adjust path if needed
 
 // If you published the shared package with this name (recommended):
 // import { makeGameStore } from "@mixmatch/shared/gameStore";
