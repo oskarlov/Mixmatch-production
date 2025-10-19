@@ -74,6 +74,7 @@ export default function Player() {
 
   // Track picked answer locally
   const [picked, setPicked] = useState(null);
+  
   useEffect(() => {
     if (stage !== "question") setPicked(null);
   }, [stage, questionKey]);

@@ -229,6 +229,7 @@ export async function transferPlaybackTo(device_id, { play = false } = {}) {
 // Replace your current attachPlaybackController with THIS version
 // ... keep existing imports and helpers ...
 
+// --- Replace existing attachPlaybackController with this version ---
 export function attachPlaybackController(useGame) {
   const select = (s) => ({
     stage: s.stage,
@@ -240,102 +241,86 @@ export function attachPlaybackController(useGame) {
   let last = select(useGame.getState());
   let lastQ = null;
   let playedThisQ = false;
-  let keepAlive = null; // ← new
+  let keepAlive = null;
 
-  async function ensurePlaying(uri) {
+  // Only resume if it's the SAME track and currently paused.
+  async function resumeIfPausedSameTrack(targetUri) {
     try {
       const st = await getPlaybackState().catch(() => null);
-      const isPlaying = !!st?.is_playing;
-      const sameTrack = !!(st?.item?.uri && uri && st.item.uri === uri);
-      if (isPlaying && sameTrack) return;
+      const sameTrack = !!(st?.item?.uri && targetUri && st.item.uri === targetUri);
+      if (!sameTrack) return;              // never start a different track here
+      if (st?.is_playing) return;          // already playing → nothing to do
 
-      // If we already started this context, a bare /play resumes; else start fresh
-      if (sameTrack) {
-        // resume on current context
-        const id = await (async () => {
-          try { return await (async () => { /* ensure device pick */ return await (async () => null)(); })(); }
-          catch { return null; }
-        })();
-        try {
-          await api(`/me/player/play${id ? `?device_id=${encodeURIComponent(id)}` : ""}`, {
-            method: "PUT",
-            body: JSON.stringify({}), // empty body resumes
-          });
-          return;
-        } catch {
-          // fall back to a full start if resume fails
-        }
-      }
-      await startPlayback({ uris: [uri], position_ms: 0 });
-    } catch (e) {
-      console.warn("[ctrl] keepalive resume failed", e);
+      // Empty body resumes current context; no device_id to avoid 403 churn.
+      await api(`/me/player/play`, { method: "PUT", body: JSON.stringify({}) });
+    } catch {
+      // swallow – keepalive should never hard-reset the song
     }
+  }
+
+  async function onEnterQuestion(uri) {
+    // Reset guards for the new question
+    playedThisQ = false;
+
+    // Stop any previous keepalive
+    if (keepAlive) { clearInterval(keepAlive); keepAlive = null; }
+
+    // IMPORTANT: don't pause here; it can create the start/pause flicker.
+    if (uri) {
+      try {
+        await startPlayback({ uris: [uri], position_ms: 0 });
+        playedThisQ = true;
+      } catch (e) {
+        console.warn("[ctrl] initial play failed", e);
+      }
+    }
+
+    // Gentle keepalive: only resume if same track is paused; never restart.
+    keepAlive = setInterval(() => {
+      const st = select(useGame.getState());
+      if (st.stage === "question" && st.qid === lastQ && st.uri) {
+        resumeIfPausedSameTrack(st.uri);
+      }
+    }, 800);
   }
 
   async function react(curr, prev) {
     const { stage, qid, uri } = curr;
-    console.log("[ctrl]", curr);
-
     const entering = stage === "question" && qid && qid !== lastQ;
     const leavingQuestion = prev.stage === "question" && stage !== "question";
 
     if (entering) {
       lastQ = qid;
-      playedThisQ = false;
-
-      // clear any previous loop and pause previous track, then start fresh
-      if (keepAlive) { clearInterval(keepAlive); keepAlive = null; }
-      try { await pausePlayback(); } catch {}
-
-      if (uri) {
-        try {
-          console.log("[ctrl] entering → start", uri);
-          await startPlayback({ uris: [uri], position_ms: 0 });
-          playedThisQ = true;
-        } catch (e) {
-          console.warn("[ctrl] play fail (enter)", e);
-        }
-      }
-
-      // start keepalive loop for this question
-      if (!keepAlive) {
-        keepAlive = setInterval(() => {
-          const st = select(useGame.getState());
-          if (st.stage === "question" && st.qid === lastQ && st.uri) {
-            ensurePlaying(st.uri);
-          }
-        }, 600);
-      }
+      await onEnterQuestion(uri);
       return;
     }
 
     if (leavingQuestion) {
       if (keepAlive) { clearInterval(keepAlive); keepAlive = null; }
-      // we intentionally do NOT pause here (reveal/result can keep playing)
+      // do NOT pause; let reveal/result continue audio if you want
       return;
     }
 
-    // URI arrived later during same question (race fix)
-    const uriArrived = stage === "question" && qid === lastQ && !playedThisQ && !!uri && prev.uri !== uri;
+    // URI arrived later during the SAME question (race fix)
+    const uriArrived =
+      stage === "question" && qid === lastQ && !playedThisQ && !!uri && prev.uri !== uri;
+
     if (uriArrived) {
       try {
-        console.log("[ctrl] media arrived → start", uri);
         await startPlayback({ uris: [uri], position_ms: 0 });
         playedThisQ = true;
       } catch (e) {
-        console.warn("[ctrl] play fail (late)", e);
+        console.warn("[ctrl] late media play failed", e);
       }
-      return;
     }
 
     if (stage === "gameover") {
-      console.log("[ctrl] gameover → pause");
       if (keepAlive) { clearInterval(keepAlive); keepAlive = null; }
       try { await pausePlayback(); } catch {}
     }
   }
 
-  // run once immediately (covers reload mid-question)
+  // Run once immediately (handles refresh mid-question)
   react(last, last);
 
   const unsub = useGame.subscribe(() => {
@@ -357,3 +342,4 @@ export function attachPlaybackController(useGame) {
     }
   };
 }
+

@@ -544,42 +544,33 @@ function seedTracks(room) {
 
     /** Start game (host OR first player) */
     socket.on("game:startGame", ({ code, lstTracks }, cb) => {
-  try {
-    const room = rooms.get(code || socket.data.code);
-    if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
-    if (!(socket.id === room.hostId || socket.id === room.firstPlayerId)) {
-      return cb?.({ ok: false, error: "NOT_ALLOWED" });
-    }
-    if (room.stage !== "lobby") return cb?.({ ok: false, error: "ALREADY_STARTED" });
+      try {
+        const room = rooms.get(code || socket.data.code);
+        if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
+        if (!(socket.id === room.hostId || socket.id === room.firstPlayerId)) {
+          return cb?.({ ok: false, error: "NOT_ALLOWED" });
+        }
+        if (room.stage !== "lobby") return cb?.({ ok: false, error: "ALREADY_STARTED" });
 
-    room.whitelistNames = new Set(Array.from(room.players.values()).map(p => p.name.toLowerCase()));
+        // freeze whitelist of names at game start
+        room.whitelistNames = new Set(
+          Array.from(room.players.values()).map(p => p.name.toLowerCase())
+        );
 
-    room.lstTracks = Array.isArray(lstTracks) ? lstTracks : [];
-    room.allowDemo = false; // reset any previous opt-in
+        room.lstTracks = lstTracks;
 
-    seedTracks(room); // seeds from spotifyTracks or lstTracks (no implicit demo)
+        //reset counters
+        // re-seed and reset counters (seedTracks will prefer spotifyTracks if present)
+        seedTracks(room);
+        room.qCount = 0;
 
-    //  if still empty and FIRST PLAYER is starting, allow demo tracks
-    if ((!room.tracks || room.tracks.length === 0) && socket.id === room.firstPlayerId) {
-      room.allowDemo = true;
-      seedTracks(room);
-    }
-
-    if (!room.tracks.length) return cb?.({ ok: false, error: "NO_TRACKS" });
-
-    const firstPlayableIdx = room.tracks.findIndex((t) => !!(t?.uri || t?.previewUrl));
-    if (firstPlayableIdx === -1) return cb?.({ ok: false, error: "NO_PLAYABLE_TRACKS" });
-    room.trackIdx = firstPlayableIdx;
-
-    room.qCount = 0;
-    startQuestion(room);
-    cb?.({ ok: true, questionId: room.q?.id });
-  } catch (err) {
-    console.error("game:startGame error", err);
-    cb?.({ ok: false, error: "SERVER_ERROR" });
-  }
-});
-
+        startQuestion(room);
+        cb?.({ ok: true, questionId: room.q?.id });
+      } catch (err) {
+        console.error("game:startGame error", err);
+        cb?.({ ok: false, error: "SERVER_ERROR" });
+      }
+    });
 
     /** Backwards compat: startRound actually starts the game */
     socket.on("game:startRound", ({ code }, cb) => {
@@ -619,21 +610,7 @@ function seedTracks(room) {
         cb?.({ ok: false, error: "SERVER_ERROR" });
       }
     });
-    socket.on("game:useDemoTracks", ({ code }, cb) => {
-  try {
-    const room = rooms.get(code || socket.data.code);
-    if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
-    if (room.stage !== "lobby") return cb?.({ ok: false, error: "ALREADY_STARTED" });
 
-    room.allowDemo = true;
-    seedTracks(room);
-    emitRoomUpdate(room.code);
-    cb?.({ ok: true, count: room.tracks.length });
-  } catch (err) {
-    console.error("game:useDemoTracks error", err);
-    cb?.({ ok: false, error: "SERVER_ERROR" });
-  }
-});
     /** Manual reveal (host only) */
     socket.on("game:reveal", ({ code }, cb) => {
       try {
@@ -668,73 +645,19 @@ function seedTracks(room) {
     });
 
     /** Play again (reset scores + start immediately) */
-    socket.on("game:playAgain", async ({ code }, cb) => {
-  try {
-    const room = rooms.get(code || socket.data.code);
-    if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
-    if (!canControl(socket, room)) return cb?.({ ok: false, error: "NOT_ALLOWED" });
-    if (room.stage !== "gameover") return cb?.({ ok: false, error: "NOT_GAMEOVER" });
-
-    // --- reset per-run state (keep settings) ---
-    clearTimers(room);
-    room.qCount = 0;
-    room.perOptionCounts = [];
-    room.answersByName = new Map();
-    room.answers = new Map();
-    room.deadline = null;
-    room.revealUntil = null;
-    room.resultUntil = null;
-
-    // --- figure out the same playlist selection as last game ---
-    const keyOrId = room.config?.selectedPlaylistIDs?.[0];
-    if (!keyOrId) return cb?.({ ok: false, error: "NO_PLAYLIST_SELECTED" });
-
-    // Map config key → real id (accepts URI/URL/raw id too)
-    const mapped = (typeof dictPlaylistID?.[keyOrId] === "string")
-      ? dictPlaylistID[keyOrId]
-      : keyOrId;
-
-    const n = Math.max(1, Number(room.config?.maxQuestions || 10));
-
-    // --- pull a fresh random sample from Spotify ---
-    let tracks;
-    try {
-      tracks = await makeTrackList(mapped, n); // mediaEngine shuffles internally
-    } catch (e) {
-      console.error("playAgain reseed failed; falling back to previous list:", e);
-      // If Spotify failed, reuse the previous seeded list (still shuffles in seedTracks if enabled)
-      tracks = Array.isArray(room.spotifyTracks) && room.spotifyTracks.length
-        ? room.spotifyTracks
-        : (Array.isArray(room.lstTracks) ? room.lstTracks : []);
-    }
-
-    if (!Array.isArray(tracks) || tracks.length === 0) {
-      return cb?.({ ok: false, error: "NO_TRACKS" });
-    }
-
-    // Prefer spotifyTracks in seedTracks(); clear lstTracks to avoid mixing
-    room.spotifyTracks = tracks;
-    room.lstTracks = [];
-
-    // Build room.tracks (respects config.randomizeOnStart)
-    seedTracks(room);
-
-    // Ensure first round is playable (has uri OR preview)
-    const firstPlayableIdx = room.tracks.findIndex(t => t && (t.uri || t.previewUrl));
-    if (firstPlayableIdx === -1) {
-      return cb?.({ ok: false, error: "NO_PLAYABLE_TRACKS" });
-    }
-    room.trackIdx = firstPlayableIdx;
-
-    // Start immediately
-    startQuestion(room);
-    cb?.({ ok: true, count: room.tracks.length, questionId: room.q?.id });
-  } catch (err) {
-    console.error("game:playAgain error", err);
-    cb?.({ ok: false, error: "SERVER_ERROR" });
-  }
-});
-
+    socket.on("game:playAgain", ({ code }, cb) => {
+      try {
+        const room = rooms.get(code || socket.data.code);
+        if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
+        if (!canControl(socket, room)) return cb?.({ ok: false, error: "NOT_ALLOWED" });
+        room.qCount = 0;
+        playAgain(room);
+        cb?.({ ok: true });
+      } catch (err) {
+        console.error("game:playAgain error", err);
+        cb?.({ ok: false, error: "SERVER_ERROR" });
+      }
+    });
 
     /** Back to lobby */
     socket.on("game:toLobby", ({ code }, cb) => {
