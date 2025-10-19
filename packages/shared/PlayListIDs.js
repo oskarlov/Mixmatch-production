@@ -9,7 +9,7 @@ const dictPlaylistID = {
     pl10s : "3w3Gg6egk7V8IbZGaZg4xX", // "37i9dQZF1DX5Ejj0EkURtP",
     // Playlist IDs genres
     plRock : "4hsDm8rrpFhiqJCEIF8nxd", // "37i9dQZF1DWXRqgorJj26U",
-    plClassicRock : "37i9dQZF1DWXRqgorJj26U",
+    plClassicRock : "6b2dBnxolvwV2L1L4thWRm", // "37i9dQZF1DWXRqgorJj26U",
     plHipHop : "1PIy8ktH4S4BwZx9JAB5zN", // "37i9dQZF1DX0XUsuxWHRQd",
     plChristmas : "37i9dQZF1DXaZMjKCB7m2q",
     plPop : "2OFfgjs6kj0eA6FNayhAAJ", // "37i9dQZF1DWTMYgB8TqtmR",
