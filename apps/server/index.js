@@ -3,7 +3,12 @@ import http from "http";
 import { Server } from "socket.io";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import mongoose from "mongoose";
+import dotenv from "dotenv";
 import { registerGameEngine } from "./engine/gameEngine.js";
+
+/** ------------------ environment ------------------ */
+dotenv.config();
 
 /** ------------------ setup ------------------ */
 const __filename = fileURLToPath(import.meta.url);
@@ -26,7 +31,33 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 const MEDIA_DIR = path.join(__dirname, "media");
 app.use("/media", express.static(MEDIA_DIR));
 
+/** ------------------ MongoDB connection ------------------ */
+if (!process.env.MONGO_URI) {
+  console.error("❌ MONGO_URI missing from environment");
+} else {
+  console.log("Attempting MongoDB connection...");
+  mongoose
+    .connect(process.env.MONGO_URI, { dbName: "mixmatch" })
+    .then(() => console.log("✅ Connected to MongoDB Atlas"))
+    .catch((err) => console.error("❌ MongoDB connection error:", err));
+}
+
+mongoose.connection.on("connected", () => console.log("🟢 MongoDB connected"));
+mongoose.connection.on("error", (err) => console.error("🔴 MongoDB error:", err));
+
 /** ------------------ game engine ------------------ */
+import { saveRound, loadRound } from "./services/gameRoundService.js";
+
+app.post("/test/save-round", express.json(), async (req, res) => {
+  const result = await saveRound(req.body);
+  res.json(result);
+});
+
+app.get("/test/load-round/:code", async (req, res) => {
+  const result = await loadRound(req.params.code);
+  res.json(result);
+});
+
 registerGameEngine(io, MEDIA_DIR);
 
 /** ------------------ start server ------------------ */

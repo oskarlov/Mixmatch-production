@@ -16,6 +16,7 @@ export default defineConfig({
       "carmella-hypsometric-justa.ngrok-free.dev",
       ".ngrok-free.dev",
       "localhost",
+      "https://unpacific-abdiel-nonrevoltingly.ngrok-free.dev"
     ],
 
     // HMR over HTTPS tunnels: use WSS + port 443
