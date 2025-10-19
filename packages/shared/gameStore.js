@@ -41,7 +41,7 @@ export const makeGameStore = (serverUrl) => {
         players,
         hostId,
         firstPlayerId: firstPlayerId ?? st.firstPlayerId,
-        config: config || st.config || init.config, // keep server as source of truth
+        config: { ...(st.config || init.config), ...(config || {}) }, // keep server as source of truth
         // only set lobby when we were idle; otherwise keep gameplay stage
         stage: code ? (st.stage === "idle" ? "lobby" : st.stage) : "idle",
       }))
@@ -61,6 +61,7 @@ export const makeGameStore = (serverUrl) => {
         resultUntil: null,
         perOptionCounts: [],
         leaderboard: [],
+        media: null,
       });
     });
 
@@ -76,6 +77,7 @@ export const makeGameStore = (serverUrl) => {
         perOptionCounts: [],
         leaderboard: [],
         progress: { answered: 0, total: get().players.length || 0 },
+        media: null,
       });
     });
 
@@ -91,6 +93,7 @@ export const makeGameStore = (serverUrl) => {
         perOptionCounts: [],
         leaderboard: [],
         progress: { answered: 0, total: get().players.length || 0 },
+        media: null,
       });
     });
 
@@ -131,9 +134,8 @@ export const makeGameStore = (serverUrl) => {
       createRoom: () => s.emit("host:createRoom"),
       // in actions return {...}, add:
       seedTracks: (tracks, cb) => {
-      const s = getSocket();
-      s.emit("game:seedTracks", { code: get().code, tracks }, (res) => cb?.(res));
-      },
+        s.emit("game:seedTracks", { code: get().code, tracks }, (res) => cb?.(res));
+        },
 
       // PLAYER: join (no auto-rejoin, no storage; always manual)
       joinRoom: (code, name, cb) => {
@@ -161,7 +163,9 @@ export const makeGameStore = (serverUrl) => {
       // updates tracklist
       setTrackList: (newLstTracks) => {set({ lstTracks: newLstTracks });},
       // host OR first player can start the game
-      startGame: () => s.emit("game:startGame", { code: get().code, lstTracks: get().lstTracks }),
+      startGame: (cb) =>
+        s.emit("game:startGame", { code: get().code, lstTracks: get().lstTracks }, cb),
+
       // backward-compat alias
       startRound: () => s.emit("game:startGame", { code: get().code }),
 
@@ -169,7 +173,8 @@ export const makeGameStore = (serverUrl) => {
       advance: () => s.emit("game:advance", { code: get().code }),
 
       // game over controls
-      playAgain: () => s.emit("game:playAgain", { code: get().code }),
+      playAgain: (cb) =>
+        s.emit("game:playAgain", { code: get().code }, (res) => cb?.(res)),
       toLobby: () =>
         s.emit("game:toLobby", { code: get().code }, (res) => {
           if (res?.ok) {
@@ -207,7 +212,7 @@ export const makeGameStore = (serverUrl) => {
         s.emit("game:updateConfig", { code, ...partial }, (res) => {
           if (res?.ok && res.config) set({ config: res.config });
           cb?.(res);
-        });
+      });
       },
     };
   });

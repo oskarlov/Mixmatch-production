@@ -32,9 +32,19 @@ function finalizeOptionsFromNewShape({ correctAnswer, distractors }) {
 }
 
 /**
- * Generate a question payload for the game round
+ * Create question payload for the game round
  * @param {{ id:string, title:string, artist:string, previewUrl?:string }} track
  */
+export function createTrackRecognitionQuestion(track) {
+  return {
+    id: crypto.randomUUID(),
+    type: "track-recognition",
+    prompt: "Name this track",
+    media: track.previewUrl ? { audioUrl: track.previewUrl } : undefined,
+    // no options / correctIndex for this type
+  };
+}
+
 export async function generateQuestion(track) {
   const r = await createQuestionFromTrack(track);
 

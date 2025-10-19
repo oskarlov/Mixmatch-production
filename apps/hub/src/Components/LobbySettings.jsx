@@ -151,7 +151,7 @@ export default function LobbySettings() {
                 className="w-full rounded-l-xl px-3 py-2 bg-transparent text-mist-100 outline-none"
                 value={maxQuestions}
                 onChange={(e) => setMaxQuestions(e.target.value)}
-                disabled={disabled || saving}
+                disabled={disabled}
               />
               {/* invisible suffix to match layout with seconds field */}
               <span className="px-3 py-2 text-mist-300 rounded-r-xl select-none opacity-0">s</span>
@@ -171,7 +171,7 @@ export default function LobbySettings() {
                 className="w-full rounded-l-xl px-3 py-2 bg-transparent text-mist-100 outline-none"
                 value={durationSec}
                 onChange={(e) => setDurationSec(e.target.value)}
-                disabled={disabled || saving}
+                disabled={disabled}
               />
               <span className="px-3 py-2 text-mist-300 rounded-r-xl select-none">s</span>
             </div>
@@ -187,14 +187,14 @@ export default function LobbySettings() {
           <div className="flex items-center gap-2 text-xs">
             <button
               onClick={() => selectAll(genres, setSelGenres)}
-              disabled={saving}
+
               className="px-2 py-1 rounded bg-ink-800/70 hover:bg-ink-700/70"
             >
               Select all
             </button>
             <button
               onClick={() => clearAll(setSelGenres)}
-              disabled={saving}
+
               className="px-2 py-1 rounded bg-ink-800/70 hover:bg-ink-700/70"
             >
               Clear

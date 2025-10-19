@@ -3,7 +3,8 @@ import SpotifyCallback from "./SpotifyCallback";                  // Handles tok
 import { useEffect, useRef, useState, useCallback } from "react";
 import { makeTrackList } from "../../server/engine/mediaEngine";
 import { redirectToAuth, hasSpotifyToken } from "../../server/engine/spotifyAuth.js";
-import { collectTracksFromPlaylists, startPlayback } from "./spotify/spotifyClient.js"; // Spotify API helpers
+import { collectTracksFromPlaylists, startPlayback, pausePlayback, attachPlaybackController  } from "./spotify/spotifyClient.js"; // Spotify API helpers
+import dictPlaylistID from "../../../packages/shared/tempPlayListIDs.js"; // adjust path if needed
 
 // If you published the shared package with this name (recommended):
 // import { makeGameStore } from "@mixmatch/shared/gameStore";
@@ -28,90 +29,139 @@ function Hub() {
     progress = { answered: 0, total: 0 },
     perOptionCounts = [],
     leaderboard = [],
-    createRoom, getConfig, setTrackList, startGame, nextQuestion, playAgain, toLobby,
-    seedTracks, // NEW (add this action in your store to emit game:seedTracks)
+    createRoom, startGame, nextQuestion, playAgain, toLobby, getConfig,
+    seedTracks, setTrackList, // NEW (add this action in your store to emit game:seedTracks)
   } = useGame();
 
-  /* ---------------- Hub audio (host-only media) ---------------- */
-  const audioRef = useRef(null);
-  const [autoplayReady, setAutoplayReady] = useState(false);
-  const lastPlayedQuestionRef = useRef(null);
-  // Prefer Spotify Connect (if authorized + URI present); otherwise fall back to preview audio
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (!media || !audioRef.current) return;
+  /* ---------------- Audio  ---------------- */
+const audioRef = useRef(null);
+const [autoplayReady, setAutoplayReady] = useState(false); // ← add this
 
-      const { spotifyUri, audioUrl } = media;
+// Mount a tiny playback controller that reacts to VM changes.
+// It starts when stage enters "question" and pauses as soon as it enters "reveal" (curtain starts to close).
+useEffect(() => {
+  const unsub = attachPlaybackController(useGame);
+  return unsub;
+}, []);
 
-      // 1) Try Spotify Connect if possible
-      if (spotifyUri && hasSpotifyToken()) {
-        try {
-          await startPlayback({ uris: [spotifyUri], position_ms: 0 });
-          return; // success, don't touch <audio>
-        } catch (err) {
-          console.warn("Spotify Connect playback failed; falling back to preview:", err);
-        }
-      }
 
-      // 2) Fallback: preview audio in the <audio> element
-      if (!cancelled && audioUrl) {
-        const el = audioRef.current;
-        el.src = audioUrl;
-        try { await el.play(); } catch {}
-      }
-    })();
+// Create room, but bounce to Spotify auth if needed
+const onCreate = useCallback(() => {
+  if (!hasSpotifyToken()) {
+    localStorage.setItem("pending_action", "createRoom");
+    redirectToAuth(); // navigates away
+    return;
+  }
+  createRoom();
+}, [createRoom]);
 
-    return () => { cancelled = true; };
-  }, [media]);
+const onStart = useCallback(async () => {
+  try {
+    const cfg = getConfig();
+    const keyOrId = cfg?.selectedPlaylistIDs?.[0];
+    if (!keyOrId) { alert("Please select a genre or decade before starting!"); return; }
 
-  // Create room, but bounce to Spotify auth if needed
-  const onCreate = useCallback(() => {
-    if (!hasSpotifyToken()) {
-      localStorage.setItem("pending_action", "createRoom");
-      redirectToAuth(); // navigates away
+    const mapped = dictPlaylistID[keyOrId] || keyOrId;
+    const extractId = (s) => {
+      const m1 = String(s).match(/spotify:playlist:([A-Za-z0-9]{22})/); if (m1) return m1[1];
+      const m2 = String(s).match(/open\.spotify\.com\/playlist\/([A-Za-z0-9]{22})/); if (m2) return m2[1];
+      const m3 = String(s).match(/^([A-Za-z0-9]{22})$/); return m3 ? m3[1] : null;
+    };
+    const playlistId = extractId(mapped);
+    if (!playlistId) { alert("Invalid playlist selection"); return; }
+
+    const numTracks = Math.max(1, Number(cfg?.maxQuestions || 10));
+    console.log(`[onStart] Building tracklist from playlist: ${playlistId}`);
+
+    let tracks;
+    try {
+      tracks = await makeTrackList(playlistId, numTracks);
+      console.log(`[onStart] ✓ Collected ${tracks.length} tracks from Spotify`);
+    } catch (e) {
+      console.error("[onStart] Spotify failed:", e);
+      const useFallback = confirm(
+        `Spotify fetch failed: ${e.message}\n\nUse demo tracks instead?`
+      );
+      if (!useFallback) return;
+      tracks = [
+        { id: "t1", title: "Billie Jean", artist: "Michael Jackson" },
+        { id: "t2", title: "Smells Like Teen Spirit", artist: "Nirvana" },
+        { id: "t3", title: "One More Time", artist: "Daft Punk" },
+        { id: "t4", title: "Dancing Queen", artist: "ABBA" },
+        { id: "t5", title: "Blinding Lights", artist: "The Weeknd" },
+        { id: "t6", title: "Shake It Off", artist: "Taylor Swift" },
+        { id: "t7", title: "Hey Ya!", artist: "OutKast" },
+        { id: "t8", title: "HUMBLE.", artist: "Kendrick Lamar" },
+        { id: "t9", title: "Poker Face", artist: "Lady Gaga" },
+        { id: "t10", title: "Take On Me", artist: "a-ha" },
+      ].slice(0, numTracks);
+    }
+
+    // Require at least one playable asset to guarantee hub media
+    const hasPlayable = tracks.some(t => !!t.uri || !!t.previewUrl);
+    if (!hasPlayable) {
+      alert("No playable tracks (no Spotify URI / previews). Pick another playlist.");
       return;
     }
-    createRoom();
-  }, [createRoom]);
-  
-  // Fetch and create track list and then starts game
-  const onStart = useCallback(async () => {
-    const currentConfig = getConfig();
-    const selectedID = currentConfig.selectedPlaylistIDs[0];
-    console.log(selectedID);
-    const numTracks = currentConfig.maxQuestions;
-    const tracks = await makeTrackList(selectedID, numTracks);
-    setTrackList(tracks);
-    startGame();
-  }, [setTrackList, startGame]);
-  // After /callback: if pending_action was "createRoom" and we now have token → create the room
-  /* // Redan lagt till i SpotifyCallback.jsx tror gammal kod???
-  useEffect(() => {
-    const pending = localStorage.getItem("pending_action");
-    if (pending === "createRoom" && hasSpotifyToken()) {
-      localStorage.removeItem("pending_action");
-      createRoom();
-    }
-  }, [createRoom]);*/
 
-  // Är denna samma som onStart???
-  // Start flow: if Spotify + playlists selected, collect tracks → seed → start
-  const onStartGame = useCallback(async () => {
-    try {
-      const picks = Array.isArray(config?.selectedPlaylistIDs) ? config.selectedPlaylistIDs : [];
-      if (hasSpotifyToken() && picks.length) {
-        const tracks = await collectTracksFromPlaylists(picks, { perList: 60, maxTotal: 400 });
-        await new Promise((resolve) =>
-          seedTracks(tracks, (res) => resolve(res))
-        );
-      }
-    } catch (e) {
-      console.warn("Seeding from Spotify failed:", e);
-    } finally {
-      startGame();
+    // Belt & suspenders: send via dedicated seed AND include in start payload
+    setTrackList(tracks);
+
+    await new Promise((resolve, reject) => {
+      seedTracks(tracks, (res) => {
+        console.log("[onStart] seedTracks →", res);
+        if (res?.ok) resolve();
+        else reject(new Error(res?.error || "Seed failed"));
+      });
+    });
+
+    console.log("[onStart] Starting game…");
+    startGame((res) => {
+      if (!res?.ok) {
+    console.warn("[onStart] startGame rejected →", res);
+       if (res.error === "NO_PLAYABLE_TRACKS" || res.error === "NO_TRACKS") {
+      alert("This selection has no playable tracks. Pick another playlist.\n\n(Or use demo tracks if you just want to test.)");
+      // If you want a one-click fallback:
+      // useDemoTracks(() => startGame());
+    } else if (res.error === "ALREADY_STARTED") {
+      // ignore (someone double-clicked); the server will continue
+    } else {
+      alert("Failed to start game. Please try again.");
     }
-  }, [config?.selectedPlaylistIDs, seedTracks, startGame]);
+  }
+});
+
+  } catch (error) {
+    console.error("[onStart] Failed:", error);
+    alert(`Failed to start game: ${error.message}`);
+  }
+}, [getConfig, seedTracks, startGame, setTrackList]);
+
+const onPlayAgain = useCallback(() => {
+  playAgain((res) => {
+    if (!res?.ok) {
+      const msg =
+        res?.error === "NOT_GAMEOVER" ? "Wait until the game ends first."
+      : res?.error === "NOT_ALLOWED" ? "Only the host or first player can restart."
+      : res?.error === "NO_PLAYLIST_SELECTED" ? "Pick a playlist in the lobby first."
+      : res?.error || "Unknown error";
+      alert(`Couldn't restart: ${msg}`);
+      return;
+    }
+    console.log("[Hub] Play again → ok", res);
+  });
+}, [playAgain]);
+
+
+
+// After /callback: if pending_action was "createRoom" and we now have token → create the room
+useEffect(() => {
+  const pending = localStorage.getItem("pending_action");
+  if (pending === "createRoom" && hasSpotifyToken()) {
+    localStorage.removeItem("pending_action");
+    createRoom();
+  }
+}, [createRoom]);
 
   /* ---------------- Spotlight + Curtains orchestration ---------------- */
   const [spotlightActive, setSpotlightActive] = useState(false);
@@ -372,7 +422,7 @@ function Hub() {
           <StageCenter>
             <LeaderboardBlock leaderboard={leaderboard} />
             <div className="flex flex-wrap items-center justify-center gap-2">
-              <PrimaryButton onClick={playAgain}>Play again</PrimaryButton>
+              <PrimaryButton onClick={onPlayAgain}>Play again</PrimaryButton>
               <SecondaryButton onClick={toLobby}>Back to lobby</SecondaryButton>
             </div>
           </StageCenter>
@@ -585,20 +635,6 @@ function SecondaryButton({ children, className = "", ...props }) {
 function AudioBlock({ audioRef, autoplayReady, setAutoplayReady }) {
   return (
     <Card title="Hub audio">
-      {/* This <audio> only plays preview fallbacks; Spotify Connect uses the app */}
-      <audio ref={audioRef} controls className="w-full" />
-      {!autoplayReady && (
-        <div className="mt-2 flex justify-center">
-          <SecondaryButton
-            onClick={() => {
-              audioRef.current?.play();
-              setAutoplayReady(true);
-            }}
-          >
-            Enable audio autoplay
-          </SecondaryButton>
-        </div>
-      )}
     </Card>
   );
 }

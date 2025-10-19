@@ -1,6 +1,7 @@
 // Game engine that runs a quiz over a list of tracks, one per round.
 import crypto from "node:crypto";
 import { generateQuestion } from "./questionEngine.js"; // question/gemini plumbing
+import { createTrackRecognitionQuestion } from "./questionEngine.js";
 
 export function registerGameEngine(io, mediaDir) {
   const rooms = new Map();
@@ -84,6 +85,18 @@ export function registerGameEngine(io, mediaDir) {
     }
   }
 
+  function coinFlip() { return Math.random() < 0.5; }
+
+  function normalizeText(s) {
+    return String(s || "")
+      .toLowerCase()
+      // remove content in parentheses/brackets like "(Remastered)" for leniency
+      .replace(/\([^)]*\)/g, "")
+      .replace(/\[[^\]]*\]/g, "")
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+  }
+
   /** ------------------ round engine ------------------ */
   async function startQuestion(room) {
     clearTimers(room);
@@ -95,8 +108,15 @@ export function registerGameEngine(io, mediaDir) {
 
     let q;
     try {
-      q = await generateQuestion(track); // Gemini-backed generator
-    } catch (err) {
+        const useTrackRecognition = track.previewUrl ? coinFlip() : false;
+        if (useTrackRecognition) {
+          // build the free-text question that plays the current track
+          q = createTrackRecognitionQuestion(track);
+        } else {
+          //multiple-choice question (Gemini)
+          q = await generateQuestion(track);
+        }
+      } catch (err) {
       console.error("Question generation failed; using fallback:", err);
       // Fallback: simple artist question
       q = {
@@ -114,7 +134,9 @@ export function registerGameEngine(io, mediaDir) {
     room.stage = "question";
     room.q = q;
     room.answersByName = new Map();
-    room.perOptionCounts = Array(q.options.length).fill(0);
+    room.perOptionCounts = q.type === "multiple-choice" && Array.isArray(q.options)
+      ? Array(q.options.length).fill(0)
+      : [];  
 
     const durationMs = room.config.defaultDurationMs ?? 20000;
     room.deadline = Date.now() + durationMs;
@@ -124,8 +146,9 @@ export function registerGameEngine(io, mediaDir) {
 
     io.to(room.code).emit("question:new", {
       id: q.id,
+      type: q.type,
       prompt: q.prompt,
-      options: q.options,
+      options: q.options, // undefined for track-recognition; client should branch by type
       durationMs,
       deadline: room.deadline,
       round: room.qCount,
@@ -162,7 +185,7 @@ export function registerGameEngine(io, mediaDir) {
     io.to(room.code).emit("question:tick", { seconds });
   }
 
-  function submitAnswer(room, socketId, answerIndex) {
+  function submitAnswer(room, socketId, answerIndex, text) {
     if (room.stage !== "question" || !room.q) return;
     if (Date.now() >= room.deadline) return;
 
@@ -172,10 +195,17 @@ export function registerGameEngine(io, mediaDir) {
 
     if (room.answersByName.has(key)) return;
 
-    const choice = Number(answerIndex);
-    room.answersByName.set(key, choice);
-    if (Number.isInteger(choice) && choice >= 0 && choice < room.perOptionCounts.length) {
-      room.perOptionCounts[choice]++;
+    if (room.q.type === "multiple-choice") {
+      const choice = Number(answerIndex);
+      room.answersByName.set(key, choice);
+      if (Number.isInteger(choice) && choice >= 0 && choice < room.perOptionCounts.length) {
+        room.perOptionCounts[choice]++;
+      }
+    } else {
+      // track-recognition: store free-text
+      const value = typeof text === "string" ? text : String(answerIndex ?? "").trim();
+      room.answersByName.set(key, value);
+      // no perOptionCounts for this type
     }
 
     const { answered, total } = progressCounts(room);
@@ -193,8 +223,8 @@ export function registerGameEngine(io, mediaDir) {
     room.revealUntil = Date.now() + 15000;
 
     io.to(room.code).emit("question:reveal", {
-      correctIndex: room.q.correctIndex ?? 0,
-      perOptionCounts: room.perOptionCounts || [],
+      correctIndex: room.q.type === "multiple-choice" ? (room.q.correctIndex ?? 0) : null,
+      perOptionCounts: room.q.type === "multiple-choice" ? (room.perOptionCounts || []) : [],
       revealUntil: room.revealUntil,
     });
 
@@ -210,6 +240,25 @@ export function registerGameEngine(io, mediaDir) {
     for (const p of room.players.values()) {
       const idx = room.answersByName.get(p.name.toLowerCase());
       if (idx === correct) p.score = (p.score || 0) + 1;
+    }
+
+    const track = room.tracks[Math.max(0, room.trackIdx - 1)];
+    if (room.q.type === "multiple-choice") {
+      const correct = room.q.correctIndex ?? 0;
+      for (const p of room.players.values()) {
+        const idx = room.answersByName.get(p.name.toLowerCase());
+        if (idx === correct) p.score = (p.score || 0) + 1;
+      }
+    } else {
+      const target = normalizeText(track?.title);
+      for (const p of room.players.values()) {
+        const typed = room.answersByName.get(p.name.toLowerCase());
+        if (!typed) continue;
+        const guess = normalizeText(typed);
+        if (guess && target && guess === target) {
+          p.score = (p.score || 0) + 1;
+          }
+      }
     }
 
     const leaderboard = [...room.players.values()]
@@ -309,12 +358,23 @@ export function registerGameEngine(io, mediaDir) {
    * Seed the room's tracks from the host-provided Spotify list (if any),
    * otherwise fall back to the hardcoded demo list.
    */
-  function seedTracks(room) {
-  const source =
-    (Array.isArray(room.spotifyTracks) && room.spotifyTracks.length)
-      ? room.spotifyTracks
-      : (Array.isArray(room.lstTracks) && room.lstTracks.length) ? room.lstTracks : HARDCODED_TRACKS;
-       
+  function isPlayable(t) {
+  return !!(t && (t.uri || t.previewUrl));
+}
+
+function seedTracks(room) {
+  // only use demo tracks if explicitly allowed
+  let source = [];
+  if (Array.isArray(room.spotifyTracks) && room.spotifyTracks.length) {
+    source = room.spotifyTracks;
+  } else if (Array.isArray(room.lstTracks) && room.lstTracks.length) {
+    source = room.lstTracks;
+  } else if (room.allowDemo) {
+    source = HARDCODED_TRACKS;
+  } else {
+    source = []; // <- no implicit fallback
+  }
+
   const base = source.slice(); // clone
   const list = room.config.randomizeOnStart ? shuffle(base) : base;
 
@@ -537,13 +597,13 @@ export function registerGameEngine(io, mediaDir) {
     });
 
     /** Player submits an answer */
-    socket.on("answer:submit", ({ code, questionId, answerIndex }, cb) => {
+    socket.on("answer:submit", ({ code, questionId, answerIndex, text }, cb) => {
       try {
         const room = rooms.get(code || socket.data.code);
         if (!room) return cb?.({ ok: false, error: "NO_SUCH_ROOM" });
         if (!room.q || room.q.id !== questionId) return cb?.({ ok: false, error: "NO_ACTIVE_QUESTION" });
 
-        submitAnswer(room, socket.id, answerIndex);
+        submitAnswer(room, socket.id, answerIndex, text);
         cb?.({ ok: true });
       } catch (err) {
         console.error("answer:submit error", err);
