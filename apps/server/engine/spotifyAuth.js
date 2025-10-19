@@ -132,10 +132,53 @@ export function hasSpotifyToken() {
     const ea = Number(localStorage.getItem("expires_at") || 0);
     return !!t && Date.now() < ea;
 }
-  
+
+/*
 export async function getAccessToken() {
     // (Optional: add refresh flow here later if token expired)
     return hasSpotifyToken() ? localStorage.getItem("access_token") : null;
+}*/
+
+const EXPIRY_SKEW_MS = 5000; // buffer to avoid edge-of-expiry
+
+export async function getAccessToken() {
+  const token = localStorage.getItem("access_token");
+  const exp   = Number(localStorage.getItem("expires_at") || 0);
+
+  // If we got a valid token
+  if (token && Number.isFinite(exp) && (Date.now() + EXPIRY_SKEW_MS) < exp) {
+    return token;
+  }
+
+  // Try to refresh if we can.
+  const refreshToken = localStorage.getItem("refresh_token");
+  if (!refreshToken) return null; // no way to refresh → caller should trigger login
+
+  const body = new URLSearchParams({
+    client_id: ID,
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+  });
+
+  const resp = await fetch("https://accounts.spotify.com/api/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body,
+  });
+
+  const { data, raw } = await readJsonOrText(resp);
+  if (!resp.ok) {
+    console.error("Spotify refresh failed:", data?.error_description || data?.error?.message || raw);
+    return null; // optional: clear tokens here if you want a clean slate
+  }
+
+  // 3) Persist new token (+ optional rotated refresh token) and return it.
+  localStorage.setItem("access_token", data.access_token);
+  const expiresAt = Date.now() + (Number(data.expires_in || 3600) - 60) * 1000;
+  localStorage.setItem("expires_at", String(expiresAt));
+  if (data.refresh_token) localStorage.setItem("refresh_token", data.refresh_token);
+
+  return data.access_token;
 }
 
 async function readJsonOrText(resp) {
