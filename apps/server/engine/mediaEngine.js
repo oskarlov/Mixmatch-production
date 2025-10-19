@@ -16,7 +16,9 @@ export async function makeTrackList(playlistID, n) {
         return {
             id: trackObject.id,// `t${i+1}`,
             title: trackObject.name,
-            artist: trackObject.artists[0].name
+            artist: trackObject.artists[0].name,
+            previewUrl: trackObject.preview_url || null,
+            uri: trackObject.uri || null,
         };
     }
     // fixa refresh token istället för hårdkodade tracks
