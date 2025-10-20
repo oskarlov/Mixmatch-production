@@ -20,8 +20,9 @@ export function getSocket(url) {
     autoConnect: true,
   };
 
-  s = url ? io(url, opts) : io(opts); // <-- no hardcoded localhost
-
+  // s = url ? io(url, opts) : io(opts); // <-- no hardcoded localhost
+  s = io(opts);
+  
   if (typeof window !== "undefined") {
     window.__MIXMATCH_SOCKET__ = s;
   }
