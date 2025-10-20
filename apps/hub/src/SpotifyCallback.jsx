@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { requestToken } from "../../server/engine/spotifyAuth.js";
+import { requestToken } from "./spotify/spotifyAuth.js";
 import { useGameStore } from "./store";
 
 export default function SpotifyCallback() {

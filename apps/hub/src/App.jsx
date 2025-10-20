@@ -1,8 +1,8 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom"; // Router
 import SpotifyCallback from "./SpotifyCallback";                  // Handles token exchange
 import { useEffect, useRef, useState, useCallback } from "react";
-import { makeTrackList } from "../../server/engine/mediaEngine";
-import { redirectToAuth, hasSpotifyToken } from "../../server/engine/spotifyAuth.js";
+import { makeTrackList } from "./spotify/mediaEngine";
+import { redirectToAuth, hasSpotifyToken } from "./spotify/spotifyAuth.js";
 import { collectTracksFromPlaylists, startPlayback, pausePlayback, attachPlaybackController  } from "./spotify/spotifyClient.js"; // Spotify API helpers
 import dictPlaylistID from "../../../packages/shared/PlayListIDs.js"; // adjust path if needed
 import { useGameStore } from "./store";

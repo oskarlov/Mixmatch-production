@@ -4,7 +4,7 @@ import {
   getPlaylistData,            // low-level: one page of tracks (needs uri in fields)
   getPreferredDeviceId,
   setPreferredDeviceId,
-} from "../../../server/engine/spotifyAuth.js";
+} from "./spotifyAuth.js";
 
 /* -------------------------------------------------------------------------- */
 /*                                HTTP helper                                 */
