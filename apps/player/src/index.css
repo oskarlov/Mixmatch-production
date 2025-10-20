@@ -28,10 +28,10 @@
   /* Primary/CTA (theater crimson) */
   --color-crimson-600: #8f1626; /* pressed/active */
   --color-crimson-500: #b11a2e; /* default */
-  --color-crimson-400: #c92a40; /* hover */
+  --color-crimson-400: #f5d77a; /* hover */
 
   /* Accents (subtle gold for focus/highlights) */
-  --color-gold-500: #edc04b;
+  --color-gold-500: #bf9b30;
   --color-gold-400: #f5d77a;
 
   /* Utility (feedback) */

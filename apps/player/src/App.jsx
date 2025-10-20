@@ -446,7 +446,7 @@ function PrimaryButton({ className = "", ...props }) {
       {...props}
       className={[
         "px-3 py-2 rounded-lg",
-        "bg-crimson-500 hover:bg-crimson-400 disabled:opacity-40",
+        "bg-gold-500 hover:bg-crimson-400 disabled:opacity-40",
         "text-mist-100 transition-colors",
         className,
       ].join(" ")}
