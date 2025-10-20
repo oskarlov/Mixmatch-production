@@ -10,7 +10,7 @@ const QUESTION_WAIT_MS = 1600;
 export default function Player() {
   const {
     code, stage, question, seconds, players,
-    joinRoom, submitAnswer, joinError,
+    joinRoom, submitAnswer, joinError, submitTextAnswer,
     selfId, firstPlayerId,
     advance, playAgain, toLobby,
     getConfig,
@@ -19,6 +19,15 @@ export default function Player() {
   const [room, setRoom] = useState("");
   const [name, setName] = useState("");
   const [joining, setJoining] = useState(false);
+  // Free-text answer state
+  const [guess, setGuess] = useState("");
+  const [submittedGuess, setSubmittedGuess] = useState(false);
+
+  // Reset when a new question arrives
+  useEffect(() => {
+    setGuess("");
+    setSubmittedGuess(false);
+  }, [question?.id]);
 
   useEffect(() => {
     try {
@@ -104,7 +113,11 @@ export default function Player() {
 
     return (
       <Screen>
+        <div className="mb-6">
+          <Logo size="lg" />
+        </div>
         <Card className="w-full max-w-sm mx-auto">
+          
           <h1 className="text-2xl font-semibold mb-3 font-display">Join game</h1>
           <form onSubmit={onSubmit} className="space-y-3">
             <Input
@@ -136,7 +149,7 @@ export default function Player() {
     return (
       <Screen>
         <Header
-          title={
+          title={ 
             <span className="inline-flex items-baseline gap-2">
               <span className="uppercase text-xs tracking-widest text-mist-300">Room</span>
               <code className="font-mono tracking-widest text-2xl">{code}</code>
@@ -197,6 +210,7 @@ export default function Player() {
 
   // --- In-game (question / reveal / result) ---
   const opts = question?.options ?? [];
+  const isText = question?.type === "track-recognition";
   const canAnswer = stage === "question";
   const showContinue = isFirst && (stage === "reveal" || stage === "result");
 
@@ -218,37 +232,72 @@ export default function Player() {
             {question?.prompt ?? "—"}
           </div>
 
-          {/* Options grid — phone-first (1 col), becomes 2 cols on wider screens */}
-          <div className="grid gap-2 grid-cols-1 sm:grid-cols-2">
-            {opts.map((opt, i) => {
-              const disabled = !canAnswer || picked != null;
-              const pickedThis = picked === i;
-              return (
-                <button
-                  key={i}
-                  onClick={() => {
-                    if (disabled) return;
-                    setPicked(i);
-                    submitAnswer(i);
-                  }}
-                  disabled={disabled}
-                  className={[
-                    "rounded-lg px-3 py-3 text-left",
-                    "bg-ink-800/80 hover:bg-ink-700/80 disabled:opacity-50",
-                    pickedThis ? "outline outline-2 outline-gold-400" : "",
-                  ].join(" ")}
-                >
-                  <div className="flex items-start gap-2">
-                    <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-ink-700 font-medium">
-                      {String.fromCharCode(65 + i)}
-                    </span>
-                    <span className="leading-snug break-words">{opt}</span>
-                  </div>
-                </button>
-              );
-            })}
-            {opts.length === 0 && <Muted>Waiting for the host…</Muted>}
-          </div>
+          {/* Options grid OR free-text input */}
+      {isText ? (
+        <div className="flex items-stretch gap-2">
+          <input
+            type="text"
+            value={guess}
+            onChange={(e) => setGuess(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                if (!submittedGuess && canAnswer && guess.trim()) {
+                  submitTextAnswer(guess);
+                  setSubmittedGuess(true);
+                }
+              }
+            }}
+            disabled={!canAnswer || submittedGuess}
+            placeholder="Type the song title…"
+            className="flex-1 rounded-lg bg-ink-800/80 px-3 py-3 outline-none disabled:opacity-50"
+          />
+          <button
+            onClick={() => {
+              if (!submittedGuess && canAnswer && guess.trim()) {
+                submitTextAnswer(guess);
+                setSubmittedGuess(true);
+              }
+            }}
+            disabled={!canAnswer || submittedGuess || !guess.trim()}
+            className="rounded-lg px-4 py-3 bg-gold-500 font-medium hover:bg-gold-400 disabled:opacity-50"
+          >
+            Submit
+          </button>
+        </div>
+      ) : (
+        /* Options grid — phone-first (1 col), becomes 2 cols on wider screens */
+        <div className="grid gap-2 grid-cols-1 sm:grid-cols-2">
+          {opts.map((opt, i) => {
+            const disabled = !canAnswer || picked != null;
+            const pickedThis = picked === i;
+            return (
+              <button
+                key={i}
+                onClick={() => {
+                  if (disabled) return;
+                  setPicked(i);
+                  submitAnswer(i);
+                }}
+                disabled={disabled}
+                className={[
+                  "rounded-lg px-3 py-3 text-left",
+                  "bg-ink-800/80 hover:bg-ink-700/80 disabled:opacity-50",
+                  pickedThis ? "outline outline-2 outline-gold-400" : "",
+                ].join(" ")}
+              >
+                <div className="flex items-start gap-2">
+                  <span className="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-md bg-ink-700 font-medium">
+                    {String.fromCharCode(65 + i)}
+                  </span>
+                  <span className="leading-snug break-words">{opt}</span>
+                </div>
+              </button>
+            );
+          })}
+          {opts.length === 0 && <Muted>Waiting for the host…</Muted>}
+        </div>
+      )}
+
         </Card>
       );
     }
@@ -258,13 +307,58 @@ export default function Player() {
         <RevealBars question={question} />
       </Card>
     );
-  } else if (stage === "result") {
-    main = (
-      <Card title="Scores">
-        <Leaderboard />
-      </Card>
-    );
-  }
+  } else if (stage === "reveal" && isText) {
+  const targetTitle = question?.trackMeta?.title || "";
+  const targetArtist = question?.trackMeta?.artist || "";
+  const answered = !!(submittedGuess || (guess && guess.trim()));
+  const correct = answered && isCloseEnough(guess || "", targetTitle || "");
+
+  main = (
+    <Card title={correct ? "Correct!" : answered ? "Incorrect!" : "Time's up"}>
+      <div className="text-center space-y-2">
+        {answered ? (
+          <div className="text-mist-400">
+            Your answer: <span className="font-medium text-mist-200">{guess || "—"}</span>
+          </div>
+        ) : (
+          <div className="text-mist-400">You didn’t answer.</div>
+        )}
+
+        <div className="font-display text-xl">
+          Correct: <span className="font-semibold">{targetTitle || "—"}</span>
+          {targetArtist ? <span className="text-mist-300"> — {targetArtist}</span> : null}
+        </div>
+
+        {correct ? (
+          <div className="inline-block mt-1 rounded-md bg-emerald-700/30 px-3 py-1 text-emerald-300 text-sm">
+            +1 point
+          </div>
+        ) : answered ? (
+          <div className="inline-block mt-1 rounded-md bg-crimson-700/30 px-3 py-1 text-rose-300 text-sm">
+            Close, but not correct
+          </div>
+        ) : null}
+      </div>
+    </Card>
+  );
+
+} else if (stage === "reveal" && question?.correctIndex != null) {
+  // MCQ reveal (unchanged)
+  main = (
+    <Card title="Correct answer">
+      <RevealBars question={question} />
+    </Card>
+  );
+
+} else if (stage === "result") {
+  main = (
+    <Card title="Scores">
+      <Leaderboard />
+    </Card>
+  );
+}
+
+
 
   return (
     <Screen>
@@ -304,6 +398,9 @@ function Header({ title, right }) {
   return (
     <header className="flex items-center justify-between gap-3">
       <h1 className="text-2xl md:text-3xl font-semibold">{title}</h1>
+      <div className="absolute left-1/2 -translate-x-1/2">
+        <Logo size="sm" onClick={() => window.location.reload()} />
+      </div>
       <div className="shrink-0">{right}</div>
     </header>
   );
@@ -463,7 +560,20 @@ function Leaderboard({ leaderboardHint = "" }) {
     </div>
   );
 }
+const LOGO_SRC = "/images/mixmatch-logo.png";
 
+function Logo({ size = "lg", onClick }) {
+  const w = size === "lg" ? "w-40 md:w-56" : "w-24 md:w-28";
+  return (
+    <img
+      src={LOGO_SRC}
+      alt="MixMatch"
+      onClick={onClick}
+      className={`${w} mx-auto select-none ${onClick ? "cursor-pointer" : ""}`}
+      draggable={false}
+    />
+  );
+}
 /* ==================== Helpers ==================== */
 
 function friendlyJoinError(code) {
@@ -473,4 +583,56 @@ function friendlyJoinError(code) {
     case "SERVER_ERROR": return "Server error. Please try again.";
     default: return "Couldn’t join. Please try again.";
   }
+}
+// ---- Fuzzy helpers (client-side) ----
+function stripDiacritics(s) {
+  try { return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, ""); }
+  catch { return String(s || ""); }
+}
+
+function normalizeTitle(s) {
+  return stripDiacritics(s)
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, "")
+    .replace(/\[[^\]]*\]/g, "")
+    .replace(/\b(feat|featuring|ft)\.?\s+[a-z0-9\s]+$/i, "")
+    .replace(/\b(remaster(?:ed)?|version|edit|mix|radio|mono|stereo)\b/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const ai = a.charCodeAt(i - 1);
+    const curr = [i];
+    for (let j = 1; j <= n; j++) {
+      const cost = ai === b.charCodeAt(j - 1) ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+    }
+    prev = curr;
+  }
+  return prev[n];
+}
+
+function isCloseEnough(guessRaw, targetRaw, { maxEditFrac = 0.2, minJaccard = 0.6 } = {}) {
+  const guess = normalizeTitle(guessRaw);
+  const target = normalizeTitle(targetRaw);
+  if (!guess || !target) return false;
+  if (guess === target) return true;
+
+  const d = levenshtein(guess, target);
+  const allowed = Math.max(1, Math.floor(Math.max(guess.length, target.length) * maxEditFrac));
+  if (d <= allowed) return true;
+
+  const gs = new Set(guess.split(" ").filter(Boolean));
+  const ts = new Set(target.split(" ").filter(Boolean));
+  let inter = 0; for (const t of gs) if (ts.has(t)) inter++;
+  const union = gs.size + ts.size - inter;
+  const jacc = union ? inter / union : 0;
+  return jacc >= minJaccard;
 }

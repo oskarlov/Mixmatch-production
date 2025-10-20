@@ -244,6 +244,18 @@ export const makeGameStore = (serverUrl) => {
         });
         set({ stage: "locked" });
       },
+      // PLAYER: submit a free-text answer (for "track-recognition")
+      submitTextAnswer: (text) => {
+        const q = get().question;
+        if (!q) return;
+        const value = (text ?? "").toString();
+        s.emit("answer:submit", {
+          code: get().code,
+          questionId: q.id,
+          text: value,
+        });
+        set({ stage: "locked" });
+      },
 
       // -------- Simple Game Settings (host-only) --------
       updateConfig: (partial, cb) => {
