@@ -163,17 +163,17 @@ export default function Player() {
             {players.length === 0 && <Muted>No players yet…</Muted>}
           </Card>
 
-          {isFirst ? (
+         {/* isFirst ? (
             <PrimaryButton
               //onClick={onStartFromPlayer}
               disabled={!canStart}
               className="w-full py-3 text-lg"
             >
               Start game
-            </PrimaryButton>
+            </PrimaryButton>    
           ) : (
             <Muted className="text-center">Waiting for the first player…</Muted>
-          )}
+          )*/} 
         </div>
       </Screen>
     );
@@ -193,9 +193,9 @@ export default function Player() {
         <div className="flex gap-2">
           {isFirst ? (
             <>
-              <PrimaryButton onClick={onStartFromPlayer} className="flex-1">
+              {/* <PrimaryButton onClick={onStartFromPlayer} className="flex-1">
                 Play again
-              </PrimaryButton>
+              </PrimaryButton> */}
               <SecondaryButton onClick={toLobby} className="flex-1">
                 Back to lobby
               </SecondaryButton>

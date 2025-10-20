@@ -391,7 +391,7 @@ useEffect(() => {
           <StageCenter>
             <LeaderboardBlock leaderboard={leaderboard} />
             <div className="flex flex-wrap items-center justify-center gap-2">
-              <PrimaryButton onClick={onPlayAgain}>Play again</PrimaryButton>
+              {/* <PrimaryButton onClick={onPlayAgain}>Play again</PrimaryButton> */}
               <SecondaryButton onClick={toLobby}>Back to lobby</SecondaryButton>
             </div>
           </StageCenter>
