@@ -2,6 +2,7 @@
 import crypto from "node:crypto";
 import { generateQuestion } from "./questionEngine.js"; // question/gemini plumbing
 import { createTrackRecognitionQuestion } from "./questionEngine.js";
+import { handleGameEnd } from "./persistenceHook.js";
 
 export function registerGameEngine(io, mediaDir) {
   const rooms = new Map();
@@ -136,7 +137,7 @@ export function registerGameEngine(io, mediaDir) {
     room.answersByName = new Map();
     room.perOptionCounts = q.type === "multiple-choice" && Array.isArray(q.options)
       ? Array(q.options.length).fill(0)
-      : [];  
+      : [];
 
     const durationMs = room.config.defaultDurationMs ?? 20000;
     room.deadline = Date.now() + durationMs;
@@ -281,19 +282,21 @@ export function registerGameEngine(io, mediaDir) {
     }, 8000);
   }
 
-  function gameEnd(room) {
+  async function gameEnd(room) {
     clearTimers(room);
     room.stage = "gameover";
-
     const leaderboard = [...room.players.values()]
       .sort((a, b) => (b.score || 0) - (a.score || 0))
       .map((p) => ({ id: p.id, name: p.name, score: p.score || 0 }));
-
     io.to(room.code).emit("game:end", {
       leaderboard,
       totalRounds: room.config.maxQuestions,
     });
-  }
+
+    // 🧠 Save game to MongoDB
+    await handleGameEnd(room);
+   }
+
 
   /** Allow skipping timers by host or first player (not during question) */
   function canControl(socket, room) {

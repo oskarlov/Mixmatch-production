@@ -1,52 +1,27 @@
 import mongoose from "mongoose";
 
-const questionSchema = new mongoose.Schema({
+const TrackSchema = new mongoose.Schema({
   id: String,
-  prompt: String,
-  options: [String],
-  correctIndex: Number,
-  durationMs: Number,
-  media: {
-    audioUrl: String,
-    imageUrl: String,
-  },
-  track: {
-    id: String,
-    title: String,
-    artist: String,
-    album: String,
-    spotifyUrl: String,
-  },
+  title: String,
+  artist: String,
+  uri: String,
+  previewUrl: String,
 });
 
-const playerSchema = new mongoose.Schema({
+const PlayerSchema = new mongoose.Schema({
   name: String,
   score: Number,
 });
 
-const configSchema = new mongoose.Schema({
-  maxQuestions: Number,
-  defaultDurationMs: Number,
-  selectedPlaylistIDs: [String],
+const GameRoundSchema = new mongoose.Schema({
+  code: { type: String, required: true },
+  genre: { type: String },
+  decade: { type: String },
+  tracksPlayed: [TrackSchema],
+  players: [PlayerSchema],
+  leaderboard: [PlayerSchema],
+  config: mongoose.Schema.Types.Mixed,
+  endedAt: { type: Date, default: Date.now },
 });
 
-const gameRoundSchema = new mongoose.Schema({
-  code: { type: String, unique: true },
-  createdAt: { type: Date, default: Date.now },
-  stage: { type: String, default: "idle" },
-  hostId: String,
-  firstPlayerId: String,
-  players: [playerSchema],
-  questions: [questionSchema],
-  leaderboard: [playerSchema],
-  lstTracks: [
-    {
-      id: String,
-      title: String,
-      artist: String,
-    },
-  ],
-  config: configSchema,
-});
-
-export const GameRound = mongoose.model("GameRound", gameRoundSchema);
+export const GameRound = mongoose.model("GameRound", GameRoundSchema);

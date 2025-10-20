@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import { registerGameEngine } from "./engine/gameEngine.js";
+import { GameRound } from "./models/GameRound.js";
 
 /** ------------------ environment ------------------ */
 dotenv.config();
@@ -45,19 +46,11 @@ if (!process.env.MONGO_URI) {
 mongoose.connection.on("connected", () => console.log("🟢 MongoDB connected"));
 mongoose.connection.on("error", (err) => console.error("🔴 MongoDB error:", err));
 
+/** ------------------ Stats routes ------------------ */
+import statsRoutes from "./routes/stats.js";
+app.use("/api/stats", statsRoutes);
+
 /** ------------------ game engine ------------------ */
-import { saveRound, loadRound } from "./services/gameRoundService.js";
-
-app.post("/test/save-round", express.json(), async (req, res) => {
-  const result = await saveRound(req.body);
-  res.json(result);
-});
-
-app.get("/test/load-round/:code", async (req, res) => {
-  const result = await loadRound(req.params.code);
-  res.json(result);
-});
-
 registerGameEngine(io, MEDIA_DIR);
 
 /** ------------------ start server ------------------ */

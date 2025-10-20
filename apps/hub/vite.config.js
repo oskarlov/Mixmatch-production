@@ -38,6 +38,10 @@ export default defineConfig({
         target: "http://server:8080",
         changeOrigin: true,
       },
+      "/api": {
+        target: "http://server:8080",
+        changeOrigin: true,
+      },
     },
   },
   cacheDir: "/tmp/vite-hub",

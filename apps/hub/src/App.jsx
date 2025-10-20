@@ -10,6 +10,7 @@ import dictPlaylistID from "../../../packages/shared/PlayListIDs.js"; // adjust 
 // import { makeGameStore } from "@mixmatch/shared/gameStore";
 // Temporary relative imports (keep your own paths)
 import TheaterBackground from "./components/TheaterBackground.jsx";
+import GameHistory from "./components/GameHistory.jsx";
 import SpotlightOverlay from "./components/SpotlightOverlay.jsx";
 import CurtainOverlay from "./components/CurtainOverlay.jsx";
 import { useGameStore } from "./store";
@@ -271,7 +272,11 @@ useEffect(() => {
             <Card title={`Players (${players.length})`}>
               <PlayerGrid players={players} hostId={hostId} />
               {players.length === 0 && <EmptyNote>No players yet…</EmptyNote>}
+              <div className="mt-3 pt-2 border-t border-ink-700/50">
+                <GameHistory compact />
+              </div>
             </Card>
+
             <Card title="Game settings">
               <div className="space-y-4 w-full">
                 <LobbySettings />

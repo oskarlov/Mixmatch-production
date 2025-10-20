@@ -1,27 +1,31 @@
-import { saveRound } from "../services/gameRoundService.js";
+import { saveGameRound } from "../services/gameRoundService.js";
 
-/**
- * Hook for saving a finished game round.
- * You can safely import this in gameEngine.js once the team is ready.
- */
-export async function handleGameEnd(gameState) {
+export async function handleGameEnd(room) {
   try {
-    // Pick the fields you actually want to persist
     const roundData = {
-      code: gameState.code,
-      players: gameState.players,
-      questions: gameState.questions || [],
-      leaderboard: gameState.leaderboard || [],
-      endedAt: new Date()
+      code: room.code,
+      genre: room.config.genre || "Unknown",
+      decade: room.config.decade || "Unknown",
+      tracksPlayed: (room.tracks || []).map(t => ({
+        id: t.id,
+        title: t.title,
+        artist: t.artist,
+        uri: t.uri || null,
+        previewUrl: t.previewUrl || null,
+      })),
+      players: [...room.players.values()].map(p => ({
+        name: p.name,
+        score: p.score || 0,
+      })),
+      leaderboard: [...room.players.values()]
+        .sort((a, b) => (b.score || 0) - (a.score || 0))
+        .map(p => ({ name: p.name, score: p.score || 0 })),
+      config: room.config,
+      endedAt: new Date(),
     };
 
-    const result = await saveRound(roundData);
-    if (result.ok) {
-      console.log(`✅ Game round ${result.code} saved successfully`);
-    } else {
-      console.warn("⚠️ Game round save failed:", result.error);
-    }
+    await saveGameRound(roundData);
   } catch (err) {
-    console.error("❌ Error in handleGameEnd:", err);
+    console.error("❌ [handleGameEnd] Failed to persist game:", err);
   }
 }
