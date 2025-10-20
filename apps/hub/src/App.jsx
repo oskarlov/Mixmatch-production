@@ -225,6 +225,7 @@ useEffect(() => {
             </span>
           }
           headerRight={<StageBadge stage={stage} />}
+          headerCenter={<Logo size="sm" onClick={() => window.location.reload()} />}
         >
           <div className="mx-auto w-full max-w-[900px] grid gap-2 items-start grid-cols-1 md:grid-cols-2">
             <Card title={`Players (${players.length})`}>
@@ -292,17 +293,14 @@ useEffect(() => {
         <Shell
           title={<code className="font-mono tracking-widest text-xl md:text-2xl">{code || "—"}</code>}
           headerRight={<StageBadge stage={stage} seconds={seconds} />}
+          headerCenter={<Logo size="sm" onClick={() => window.location.reload()} />}
           bodyHidden={questionStageHidden}
         >
           <StageCenter>
             {settledForRender ? (
               <>
                 <QuestionBlock question={question} showOptionsDimmed />
-                <AudioBlock
-                  audioRef={audioRef}
-                  autoplayReady={autoplayReady}
-                  setAutoplayReady={setAutoplayReady}
-                />
+                
               </>
             ) : (
               <Card><div className="opacity-60">Preparing question…</div></Card>
@@ -332,9 +330,15 @@ useEffect(() => {
         <Shell
           title={<code className="font-mono tracking-widest text-xl md:text-2xl">{code || "—"}</code>}
           headerRight={<StageBadge stage={stage} seconds={seconds} label="Reveal ends in" />}
+          headerCenter={<Logo size="sm" onClick={() => window.location.reload()} />}
         >
           <StageCenter>
+            {question?.type === "track-recognition" ? (
+            <FreeTextReveal question={question} />
+            ) : (
             <RevealBlock question={question} perOptionCounts={perOptionCounts} />
+            )}
+
           </StageCenter>
         </Shell>
       </TheaterBackground>
@@ -354,6 +358,7 @@ useEffect(() => {
         <Shell
           title={<code className="font-mono tracking-widest text-xl md:text-2xl">{code || "—"}</code>}
           headerRight={<StageBadge stage={stage} seconds={seconds} label="Next question in" />}
+          headerCenter={<Logo size="sm" onClick={() => window.location.reload()} />}
         >
           <StageCenter>
             <LeaderboardBlock leaderboard={leaderboard} compact />
@@ -381,6 +386,7 @@ useEffect(() => {
         <Shell
           title={<code className="font-mono tracking-widest text-xl md:text-2xl">{code || "—"}</code>}
           headerRight={<StageBadge stage={stage} />}
+          headerCenter={<Logo size="sm" onClick={() => window.location.reload()} />}
         >
           <StageCenter>
             <LeaderboardBlock leaderboard={leaderboard} />
@@ -408,6 +414,7 @@ useEffect(() => {
         <Shell
           title={<>{stage || "Hub"}</>}
           headerRight={<StageBadge stage={stage} seconds={seconds} />}
+          headerCenter={<Logo size="sm" onClick={() => window.location.reload()} />}
         >
           <StageCenter>
             <Card>Unknown stage.</Card>
@@ -428,7 +435,17 @@ useEffect(() => {
 
 /* ================== UI Building Blocks ================== */
 
-function Shell({ children, headerRight, wide = false, title = <>Hub</>, bodyHidden = false }) {
+// import Logo only if you want to hardcode it here; otherwise inject via prop
+// import Logo from "../components/ui/Logo.jsx";
+
+function Shell({
+  children,
+  headerRight,
+  wide = false,
+  title = <>Hub</>,
+  bodyHidden = false,
+  headerCenter = null,         
+}) {
   return (
     <div className="relative z-10 min-h-dvh text-mist-100 font-sans px-4 sm:px-6 lg:px-8 py-6">
       <div
@@ -437,10 +454,18 @@ function Shell({ children, headerRight, wide = false, title = <>Hub</>, bodyHidd
           " space-y-4 relative overflow-hidden"
         }
       >
-        <header className="flex items-center justify-between gap-4">
+        <header className="relative flex items-center justify-between gap-4">
           <h1 className="tracking-wide text-balance text-2xl md:text-3xl font-semibold">
             {title}
           </h1>
+
+          {/* Center slot (absolute) */}
+          {headerCenter && (
+            <div className="absolute left-1/2 -translate-x-1/2">
+              {headerCenter}
+            </div>
+          )}
+
           <div className="shrink-0">{headerRight}</div>
         </header>
 
@@ -452,6 +477,7 @@ function Shell({ children, headerRight, wide = false, title = <>Hub</>, bodyHidd
     </div>
   );
 }
+
 
 function StageCenter({ children }) {
   return (
@@ -486,16 +512,14 @@ function Landing({ onCreate }) {
         <div className="mx-auto max-w-[900px] space-y-8">
           {/* Header */}
           <header className="flex items-center justify-between gap-4">
-            <h1 className="text-3xl md:text-4xl tracking-wide font-semibold font-display">
-              MixMatch
-            </h1>
+            {/* keep empty or your header content */}
           </header>
 
-          {/* Description */}
-          <section className="grid gap-2">
-            <p className="text-mist-300 max-w-prose text-balance">
-              Host a music quiz. Friends join from their phones or desktop via the player.
-            </p>
+        
+
+          {/* Logo above Join */}
+          <section className="w-full text-center">
+            <Logo size="lg" />
           </section>
 
           {/* Join first */}
@@ -521,6 +545,12 @@ function Landing({ onCreate }) {
             >
               Create room
             </PrimaryButton>
+          </section>
+            {/* Description */}
+          <section className="grid gap-2 w-full text-center mb-4 mx-auto max-w-md">
+            <p className="text-mist-300 max-w-prose text-balance mx-auto">
+              Host a music quiz. Friends join from their phones or desktop via the player.
+            </p>
           </section>
         </div>
       </div>
@@ -594,19 +624,13 @@ function SecondaryButton({ children, className = "", ...props }) {
   );
 }
 
-/* ============ Hub-only audio block ============ */
-function AudioBlock({ audioRef, autoplayReady, setAutoplayReady }) {
-  return (
-    <Card title="Hub audio">
-    </Card>
-  );
-}
+
 
 /* ============ Question / Reveal / Leaderboard ============ */
 
 function QuestionBlock({ question, showOptionsDimmed = false }) {
   return (
-    <Card title="Question">
+    <Card>
       <div className="font-display text-lg md:text-xl mb-3 leading-snug text-balance text-center">
         {question?.prompt ?? "—"}
       </div>
@@ -637,7 +661,7 @@ function RevealBlock({ question, perOptionCounts }) {
   const total = (perOptionCounts ?? []).reduce((a, b) => a + (b || 0), 0);
 
   return (
-    <Card title="Correct answer">
+    <Card>
       <div className="font-display text-lg md:text-xl mb-3 leading-snug text-balance text-center">
         {question?.prompt ?? "—"}
       </div>
@@ -672,6 +696,21 @@ function RevealBlock({ question, perOptionCounts }) {
           );
         })}
       </ol>
+    </Card>
+  );
+}
+function FreeTextReveal({ question }) {
+  const meta = question?.trackMeta || {};
+  const title = meta.title || "Unknown title";
+  const artist = meta.artist ? ` — ${meta.artist}` : "";
+  return (
+    <Card>
+      <div className="text-center">
+        <div className="font-display text-xl md:text-2xl">{title}{artist}</div>
+        <div className="mt-2 text-mist-400">
+          Players who typed the exact title get a point.
+        </div>
+      </div>
     </Card>
   );
 }
@@ -731,6 +770,21 @@ function LeaderboardBlock({ leaderboard, compact = false }) {
         ))}
       </div>
     </Card>
+  );
+}
+/* === Shared small component === */
+const LOGO_SRC = "/images/mixmatch-logo.png";
+
+function Logo({ size = "lg", onClick }) {
+  const w = size === "lg" ? "w-74 md:w-90" : "w-24 md:w-28";
+  return (
+    <img
+      src={LOGO_SRC}
+      alt="MixMatch"
+      onClick={onClick}
+      className={`${w} mx-auto select-none ${onClick ? "cursor-pointer" : ""}`}
+      draggable={false}
+    />
   );
 }
 

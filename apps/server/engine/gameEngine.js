@@ -109,7 +109,8 @@ export function registerGameEngine(io, mediaDir) {
 
     let q;
     try {
-        const useTrackRecognition = track.previewUrl ? coinFlip() : false;
+        const playable = track.previewUrl || track.uri;
+        const useTrackRecognition = playable ? coinFlip() : false;
         if (useTrackRecognition) {
           // build the free-text question that plays the current track
           q = createTrackRecognitionQuestion(track);
@@ -251,16 +252,15 @@ export function registerGameEngine(io, mediaDir) {
         if (idx === correct) p.score = (p.score || 0) + 1;
       }
     } else {
-      const target = normalizeText(track?.title);
-      for (const p of room.players.values()) {
-        const typed = room.answersByName.get(p.name.toLowerCase());
-        if (!typed) continue;
-        const guess = normalizeText(typed);
-        if (guess && target && guess === target) {
-          p.score = (p.score || 0) + 1;
-          }
-      }
+    const targetRaw = track?.title;
+    for (const p of room.players.values()) {
+      const typed = room.answersByName.get(p.name.toLowerCase());
+      if (!typed) continue;
+      if (isCloseEnough(typed, targetRaw)) {
+        p.score = (p.score || 0) + 1;
     }
+  }
+}
 
     const leaderboard = [...room.players.values()]
       .sort((a, b) => (b.score || 0) - (a.score || 0))
@@ -527,13 +527,15 @@ function seedTracks(room) {
           const nowLeft = Math.max(0, (room.deadline ?? Date.now()) - Date.now());
           socket.emit("question:new", {
             id: room.q.id,
+            type: room.q.type,
             prompt: room.q.prompt,
-            options: room.q.options,
+            options: room.q.options, // undefined for track-recognition; client branches by type
             durationMs: nowLeft || room.config.defaultDurationMs,
             deadline: room.deadline,
             round: room.qCount,
             totalRounds: room.config.maxQuestions,
             remaining: Math.max(0, room.tracks.length - room.trackIdx),
+            trackMeta: { title: (room.tracks[Math.max(0, room.trackIdx - 1)]?.title || ""), artist: (room.tracks[Math.max(0, room.trackIdx - 1)]?.artist || "") },
           });
           const { answered, total } = progressCounts(room);
           socket.emit("progress:update", { answered, total });
@@ -755,7 +757,7 @@ function seedTracks(room) {
       }
     });
 
-    /** ------------------ NEW: Host seeds Spotify tracks before starting ------------------ */
+    /** ------------------ Host seeds Spotify tracks before starting ------------------ */
     socket.on("game:seedTracks", ({ code, tracks, meta }, cb) => {
   try {
     const room = rooms.get(code || socket.data.code);
@@ -866,4 +868,75 @@ function seedTracks(room) {
       }
     });
   });
+}
+/** ------------------ Title normalization & matching ------------------ */
+// Remove accents (Beyoncé -> beyonce), then lower-case and simplify.
+function stripDiacritics(s) {
+  try { return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, ""); }
+  catch { return String(s || ""); }
+}
+
+// More aggressive normalization for titles.
+function normalizeTitle(s) {
+  return stripDiacritics(s)
+    .toLowerCase()
+    // remove (...) and [...] content: (Remastered), [Live], etc.
+    .replace(/\([^)]*\)/g, "")
+    .replace(/\[[^\]]*\]/g, "")
+    // drop trailing "feat/featuring/ft ..." blobs
+    .replace(/\b(feat|featuring|ft)\.?\s+[a-z0-9\s]+$/i, "")
+    // drop common version words that cause false negatives
+    .replace(/\b(remaster(?:ed)?|version|edit|mix|radio|mono|stereo)\b/g, "")
+    // collapse to single spaces
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Classic Levenshtein distance (O(m*n), but strings are short here)
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+
+  let prev = new Array(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+
+  for (let i = 1; i <= m; i++) {
+    const ai = a.charCodeAt(i - 1);
+    const curr = new Array(n + 1);
+    curr[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = ai === b.charCodeAt(j - 1) ? 0 : 1;
+      curr[j] = Math.min(
+        prev[j] + 1,      // deletion
+        curr[j - 1] + 1,  // insertion
+        prev[j - 1] + cost // substitution
+      );
+    }
+    prev = curr;
+  }
+  return prev[n];
+}
+
+// Decide if guess is "close enough" to target.
+function isCloseEnough(guessRaw, targetRaw) {
+  const guess = normalizeTitle(guessRaw);
+  const target = normalizeTitle(targetRaw);
+  if (!guess || !target) return false;
+  if (guess === target) return true;
+
+  // 1) Edit-distance threshold: allow ~20% typos
+  const d = levenshtein(guess, target);
+  const maxLen = Math.max(guess.length, target.length);
+  const allowed = Math.max(1, Math.floor(maxLen * 0.2)); // tweakable
+  if (d <= allowed) return true;
+
+  // 2) Token overlap (Jaccard) as backup: accept if >= 0.6
+  const gs = new Set(guess.split(" ").filter(Boolean));
+  const ts = new Set(target.split(" ").filter(Boolean));
+  let inter = 0; for (const t of gs) if (ts.has(t)) inter++;
+  const union = gs.size + ts.size - inter;
+  const jacc = union ? inter / union : 0;
+  return jacc >= 0.6;
 }
