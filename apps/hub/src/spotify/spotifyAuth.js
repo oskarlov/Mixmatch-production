@@ -33,8 +33,8 @@ export async function redirectToAuth() {
 
     const hashed = await sha256(codeVerifier)
     const codeChallenge = base64encode(hashed);
-    const redirectUri = `${window.location.origin}/callback`;
-
+    const redirectUri = "https://mixmatch-production-hub.vercel.app/callback"; //`${window.location.origin}/callback`;
+    
     const scope = [
         "user-read-private",
         "playlist-read-private",
@@ -86,7 +86,7 @@ export async function requestToken() {
       throw new Error("State mismatch. Start the login flow from the same origin.");
     }
     
-    const redirectUri = `${window.location.origin}/callback`;
+    const redirectUri = "https://mixmatch-production-hub.vercel.app/callback"; // `${window.location.origin}/callback`;
     const codeVerifier = localStorage.getItem("code_verifier");
     if (!codeVerifier) throw new Error("Missing code_verifier in localStorage");
   
