@@ -21,6 +21,7 @@ services:
       - CI=true
       - CHOKIDAR_USEPOLLING=1
       - WATCHPACK_POLLING=true
+      - VITE_SPOTIFY_CLIENT_ID=${VITE_SPOTIFY_CLIENT_ID}
     ports:
       - "5173:5173"
     volumes:

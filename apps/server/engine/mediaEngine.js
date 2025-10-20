@@ -41,10 +41,10 @@ export async function makeTrackList(playlistID, n) {
         return HARDCODED_TRACKS;
     }
     const dataPL = await getPlaylistData(token, playlistID);
-    console.log(dataPL);
+    // console.log(dataPL);
     // lägg till randomize innan slice
     const tracks = shuffle(dataPL).slice(0, n).map(saveCorrectInfoCB);
-    console.log(tracks);
+    // console.log(tracks);
     return tracks;
 }
 
