@@ -2,6 +2,8 @@ FROM node:20-alpine
 WORKDIR /app
 RUN corepack enable
 
+ENV PATH="/app/node_modules/.bin:$PATH"
+
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY apps/player/package.json apps/player/package.json
 COPY packages/shared/package.json packages/shared/package.json
