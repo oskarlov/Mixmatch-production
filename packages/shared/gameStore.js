@@ -133,9 +133,22 @@ export const makeGameStore = (serverUrl) => {
       // HOST: create a room
       createRoom: () => s.emit("host:createRoom"),
       // in actions return {...}, add:
-      seedTracks: (tracks, cb) => {
-        s.emit("game:seedTracks", { code: get().code, tracks }, (res) => cb?.(res));
-        },
+      seedTracks: (tracks, metaOrCb, maybeCb) => {
+      const code = get().code;
+       let meta, cb;
+
+      if (typeof metaOrCb === "function") {
+        cb = metaOrCb;
+        } else {
+            meta = metaOrCb;
+          cb = typeof maybeCb === "function" ? maybeCb : undefined;
+        }
+
+        const payload = { code, tracks };
+        if (meta && typeof meta === "object") payload.meta = meta;
+
+      s.emit("game:seedTracks", payload, (res) => cb?.(res));
+      },
 
       // PLAYER: join (no auto-rejoin, no storage; always manual)
       joinRoom: (code, name, cb) => {
@@ -171,10 +184,36 @@ export const makeGameStore = (serverUrl) => {
 
       // skip timers in reveal/result
       advance: () => s.emit("game:advance", { code: get().code }),
+      requestStartViaHub: (cb) =>
+          s.emit("game:requestStart", { code: get().code }, cb),
 
       // game over controls
-      playAgain: (cb) =>
-        s.emit("game:playAgain", { code: get().code }, (res) => cb?.(res)),
+      playAgain: (arg1, arg2, arg3) => {
+        const code = get().code;
+        let tracks, meta, cb;
+
+        if (Array.isArray(arg1)) {
+          tracks = arg1;
+        if (typeof arg2 === "function") {
+          cb = arg2;
+        } else {
+          meta = arg2;
+          cb = typeof arg3 === "function" ? arg3 : undefined;
+        }
+        } else if (typeof arg1 === "function") {
+        cb = arg1;
+        } else if (arg1 && typeof arg1 === "object") {
+        meta = arg1;
+        cb = typeof arg2 === "function" ? arg2 : undefined;
+        }
+
+        const payload = { code };
+        if (tracks) payload.tracks = tracks;
+        if (meta) payload.meta = meta;
+
+        s.emit("game:playAgain", payload, (res) => cb?.(res));
+    },
+      
       toLobby: () =>
         s.emit("game:toLobby", { code: get().code }, (res) => {
           if (res?.ok) {

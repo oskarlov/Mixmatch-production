@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useRef, useState, useCallback} from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { makeGameStore } from "../../../packages/shared/gameStore.js";
 import EmoteDrawer, { EmoteOpener } from "./components/EmoteDrawer.jsx";
 
 const useGame = makeGameStore(import.meta.env.VITE_SERVER_URL);
 
-// Delay before showing the question on *every* question stage.
-// Match this to the Hub’s visible animation (curtain + flicker) settle time.
+// Match Hub animation delay (curtain + flicker)
 const QUESTION_WAIT_MS = 1600;
 
 export default function Player() {
@@ -13,12 +12,14 @@ export default function Player() {
     code, stage, question, seconds, players,
     joinRoom, submitAnswer, joinError,
     selfId, firstPlayerId,
-    startGame, advance, playAgain, toLobby
+    advance, playAgain, toLobby,
+    getConfig,
   } = useGame();
 
   const [room, setRoom] = useState("");
   const [name, setName] = useState("");
   const [joining, setJoining] = useState(false);
+
   useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -28,6 +29,7 @@ export default function Player() {
       if (prefName) setName(prefName);
     } catch {}
   }, []);
+
   const [emoteOpen, setEmoteOpen] = useState(false);
 
   // Fallback: if firstPlayerId not set yet, treat the first listed player as first
@@ -45,11 +47,9 @@ export default function Player() {
     [question?.id, stage]
   );
 
-  // Detect fresh entry into question stage
   const justEnteredQuestion =
     stage === "question" && prevStageRef.current !== "question";
 
-  // Synchronous guard to prevent 1-frame flash on *every* question
   if (justEnteredQuestion) {
     gateRef.current = true;
   }
@@ -58,13 +58,11 @@ export default function Player() {
     clearTimeout(gateTimerRef.current);
 
     if (stage === "question") {
-      // Wait for hub animation every time
       gateTimerRef.current = setTimeout(() => {
         gateRef.current = false;
-        forceTick((n) => n + 1); // reveal
+        forceTick((n) => n + 1);
       }, QUESTION_WAIT_MS);
     } else {
-      // Non-question stages: no gate
       gateRef.current = false;
     }
 
@@ -72,26 +70,24 @@ export default function Player() {
     return () => clearTimeout(gateTimerRef.current);
   }, [stage, questionKey]);
 
+  /* ---------- Start from Player: reuse playAgain path (Hub reseeds via Spotify) ---------- */
+  const hasPick = !!(getConfig()?.selectedPlaylistIDs?.length);
+  const canStart = stage === "lobby" && hasPick;
+
+  const onStartFromPlayer = useCallback(() => {
+    playAgain((res) => {
+      if (!res?.ok) {
+        console.warn("[Player] playAgain(start) failed:", res);
+        
+      }
+    });
+  }, [playAgain]);
+
   // Track picked answer locally
   const [picked, setPicked] = useState(null);
-  
   useEffect(() => {
     if (stage !== "question") setPicked(null);
   }, [stage, questionKey]);
-  const onPlayerPlayAgain = useCallback(() => {
-  playAgain((res) => {
-    if (!res?.ok) {
-      const msg =
-        res?.error === "NOT_ALLOWED" ? "Only host/first player can restart."
-      : res?.error === "NOT_GAMEOVER" ? "Wait until the game ends first."
-      : res?.error || "Unknown error";
-      console.warn("[Player] playAgain failed:", res);
-      alert(msg);
-      return;
-    }
-    console.log("[Player] Play again → ok", res);
-  });
-}, [playAgain]);
 
   /* ========================= Renders ========================= */
 
@@ -153,27 +149,18 @@ export default function Player() {
             <PlayerList players={players} hostId={computedFirst} />
             {players.length === 0 && <Muted>No players yet…</Muted>}
           </Card>
+
           {isFirst ? (
-  <PrimaryButton
-    onClick={() => {
-      startGame((res) => {
-        if (!res?.ok) {
-          // These come directly from the server
-          if (res.error === "NO_TRACKS" || res.error === "NO_PLAYABLE_TRACKS") {
-            alert("Host hasn’t seeded a playlist yet. Ask the host to pick one — or try again to use demo tracks.");
-          } else {
-            alert("Couldn’t start yet. Please try again.");
-          }
-        }
-      });
-    }}
-    className="w-full py-3 text-lg"
-  >
-    Start game
-  </PrimaryButton>
-) : (
-  <Muted className="text-center">Waiting for the first player…</Muted>
-)}
+            <PrimaryButton
+              //onClick={onStartFromPlayer}
+              disabled={!canStart}
+              className="w-full py-3 text-lg"
+            >
+              Start game
+            </PrimaryButton>
+          ) : (
+            <Muted className="text-center">Waiting for the first player…</Muted>
+          )}
         </div>
       </Screen>
     );
@@ -193,8 +180,12 @@ export default function Player() {
         <div className="flex gap-2">
           {isFirst ? (
             <>
-              <PrimaryButton onClick={onPlayerPlayAgain} className="flex-1">Play again</PrimaryButton>
-              <SecondaryButton onClick={toLobby} className="flex-1">Back to lobby</SecondaryButton>
+              <PrimaryButton onClick={onStartFromPlayer} className="flex-1">
+                Play again
+              </PrimaryButton>
+              <SecondaryButton onClick={toLobby} className="flex-1">
+                Back to lobby
+              </SecondaryButton>
             </>
           ) : (
             <Muted className="text-center w-full">Waiting for next steps…</Muted>
@@ -262,14 +253,12 @@ export default function Player() {
       );
     }
   } else if (stage === "reveal" && question?.correctIndex != null) {
-    // Only the correct answer during reveal
     main = (
       <Card title="Correct answer">
         <RevealBars question={question} />
       </Card>
     );
   } else if (stage === "result") {
-    // Only scores during result
     main = (
       <Card title="Scores">
         <Leaderboard />
@@ -290,12 +279,13 @@ export default function Player() {
       {showContinue && (
         <PrimaryButton onClick={advance} className="w-full mt-2">Continue</PrimaryButton>
       )}
+
       {code && (
-  <>
-    <EmoteOpener onOpen={() => setEmoteOpen(true)} />
-    <EmoteDrawer code={code} open={emoteOpen} onClose={() => setEmoteOpen(false)} />
-  </>
-)}
+        <>
+          <EmoteOpener onOpen={() => setEmoteOpen(true)} />
+          <EmoteDrawer code={code} open={emoteOpen} onClose={() => setEmoteOpen(false)} />
+        </>
+      )}
     </Screen>
   );
 }
@@ -405,7 +395,7 @@ function PlayerList({ players, hostId }) {
 
 function RevealBars({ question }) {
   const correct = question?.correctIndex;
-  const counts = question?.perOptionCounts ?? []; // optional; if missing, bars will be zero
+  const counts = question?.perOptionCounts ?? [];
   const total = counts.reduce((a, b) => a + (b || 0), 0);
 
   return (
